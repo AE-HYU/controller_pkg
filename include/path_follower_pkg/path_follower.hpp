@@ -6,6 +6,7 @@
 #include <geometry_msgs/msg/point.hpp>
 #include <ackermann_msgs/msg/ackermann_drive_stamped.hpp>
 #include <planning_custom_msgs/msg/path_with_velocity.hpp>
+#include <std_msgs/msg/float64_multi_array.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
@@ -57,6 +58,14 @@ struct ControllerConfig {
     bool use_planner_velocity = true;
     double velocity_scale_factor = 0.8;
     double velocity_smoothing = 0.2;
+    
+    // Stanley controller parameters
+    double stanley_k_e = 1.2;        // Cross-track error gain
+    double stanley_k_soft = 0.5;     // Softening constant
+    double stanley_heading_gain = 0.8;  // Heading error gain
+    double stanley_max_cross_track = 0.15; // Maximum cross-track correction
+    double stanley_steering_smoothing = 0.3; // Steering smoothing factor
+    bool use_stanley = true;          // Use Stanley controller flag
 };
 
 class PathFollower : public rclcpp::Node {
@@ -84,6 +93,12 @@ private:
     double calculate_cross_track_correction(const nav_msgs::msg::Path& path, const VehicleState& vehicle, int target_index);
     double calculate_target_speed(double steering_angle, double lateral_error, bool in_corner = false, double planner_velocity = -1.0);
     
+    // Stanley Controller
+    std::pair<double, double> stanley_method_control();
+    std::tuple<geometry_msgs::msg::Point, int, double> find_closest_point_on_path(const nav_msgs::msg::Path& path, const VehicleState& vehicle);
+    double calculate_path_heading_at_point(const nav_msgs::msg::Path& path, int index);
+    int find_target_point_for_velocity(const nav_msgs::msg::Path& path, const VehicleState& vehicle);
+
     // Corner detection and handling
     bool detect_upcoming_corner(const nav_msgs::msg::Path& path, const VehicleState& vehicle);
     double calculate_path_curvature(const nav_msgs::msg::Path& path, int start_idx, int samples = 5);
@@ -97,12 +112,18 @@ private:
     
     // Safety functions
     void publish_stop_command();
+
+    // Analysis functions
+    void publish_stanley_analysis_data(double vehicle_yaw, double path_heading, double heading_error,
+                                     double cross_track_term, double steering_angle, 
+                                     double steering_smoothing, double lateral_error);
     
     // ROS components
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
     rclcpp::Subscription<planning_custom_msgs::msg::PathWithVelocity>::SharedPtr path_with_velocity_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
     rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr stanley_analysis_pub_;
     rclcpp::TimerBase::SharedPtr control_timer_;
     
     // State variables
@@ -110,6 +131,7 @@ private:
     planning_custom_msgs::msg::PathWithVelocity current_velocity_path_;
     bool has_velocity_path_;
     double smoothed_velocity_;
+    double previous_steering_angle_;  // For steering smoothing
     VehicleState vehicle_state_;
     ControllerConfig config_;
     

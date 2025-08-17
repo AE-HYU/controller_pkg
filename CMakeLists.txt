@@ -27,11 +27,6 @@ add_executable(path_follower_node
   src/path_follower.cpp
 )
 
-add_executable(safety_monitor_node
-  src/safety_monitor_node.cpp
-  src/safety_monitor.cpp
-)
-
 # specify dependencies
 ament_target_dependencies(path_follower_node
   rclcpp
@@ -45,18 +40,9 @@ ament_target_dependencies(path_follower_node
   planning_custom_msgs
 )
 
-ament_target_dependencies(safety_monitor_node
-  rclcpp
-  std_msgs
-  ackermann_msgs
-  rcl_interfaces
-  planning_custom_msgs
-)
-
 # install targets
 install(TARGETS
   path_follower_node
-  safety_monitor_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

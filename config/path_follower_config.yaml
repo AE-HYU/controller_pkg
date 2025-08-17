@@ -20,13 +20,23 @@ path_follower:
     
     # Planner velocity integration
     use_planner_velocity: true   # Use velocity from planner (PathWithVelocity)
-    velocity_scale_factor: 1.6   # Scale factor for planner velocity (80% of planned velocity)
+    velocity_scale_factor: 1.0   # Scale factor for planner velocity (80% of planned velocity)
     velocity_smoothing: 0.2      # Smoothing factor for velocity changes
     
     # Corner handling
     corner_detection_angle: 0.3    # Corner detection threshold (radians)
     corner_speed_factor: 0.7       # Speed reduction factor in corners
     anticipation_distance: 2.0     # Look-ahead distance for corner detection (m)
+    
+    # Controller Selection
+    use_stanley: true            # Controller type: true = Stanley controller, false = Pure Pursuit controller
+    
+    # Stanley controller parameters
+    stanley_k_e: 2.8             # Cross-track error gain for Stanley controller (reduced for less oscillation)
+    stanley_k_soft: 1.0          # Softening constant to prevent division by zero (increased for smoother response)
+    stanley_heading_gain: 1.0    # Heading error gain (less than 1.0 for stability)
+    stanley_max_cross_track: 0.15 # Maximum cross-track correction (rad) to prevent overshoot
+    stanley_steering_smoothing: 0.3 # Steering smoothing factor (0 = no smoothing, 1 = maximum smoothing)
     
     # Safety parameters
     max_lateral_error: 2.0       # Maximum lateral error before speed reduction
