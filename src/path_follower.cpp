@@ -97,7 +97,7 @@ bool PathFollower::initialize() {
         std::bind(&PathFollower::path_with_velocity_callback, this, std::placeholders::_1));
         
     odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-        "/pf/pose/odom", 10,
+        "/odom", 10,
         std::bind(&PathFollower::odom_callback, this, std::placeholders::_1));
     
     // Initialize control timer (50 Hz)
@@ -198,6 +198,7 @@ void PathFollower::control_timer_callback() {
     
     // Calculate control commands using the configured controller
     double steering_angle, speed;
+    
     if (config_.use_stanley) {
         // Use Stanley controller
         auto [stanley_steering, stanley_speed] = stanley_method_control();
@@ -240,6 +241,9 @@ std::pair<double, double> PathFollower::pure_pursuit_control() {
     }
     
     // Detect upcoming corner
+    // Reason for corner detection:
+    // - Corners require different lookahead and speed handling
+    // - Helps to adjust steering and speed dynamically
     bool in_corner = detect_upcoming_corner(path, vehicle);
     
     // Find target point (with shorter lookahead for corners)
@@ -533,7 +537,7 @@ bool PathFollower::detect_upcoming_corner(const nav_msgs::msg::Path& path, const
         return false;
     }
     
-    // Find closest point on path
+    // Find the index of the closest point on the path
     double min_distance = std::numeric_limits<double>::max();
     int closest_idx = 0;
     
@@ -549,6 +553,12 @@ bool PathFollower::detect_upcoming_corner(const nav_msgs::msg::Path& path, const
     }
     
     // Look ahead on the path to detect corners
+    // What is anticipation points?
+    // - Anticipation points are used to look ahead on the path to detect corners
+    // - They help in calculating curvature and steering requirements for upcoming turns
+    // - This allows the vehicle to adjust its speed and steering in advance
+    // - Anticipation points are calculated based on the configured anticipation distance
+    // - They are used to sample the path ahead of the current position
     int anticipation_points = static_cast<int>(config_.anticipation_distance / 0.2);  // Assuming 0.2m spacing
     int check_start = std::min(closest_idx, static_cast<int>(path.poses.size()) - 5);
     int check_end = std::min(check_start + anticipation_points, static_cast<int>(path.poses.size()) - 1);

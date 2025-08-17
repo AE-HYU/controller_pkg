@@ -24,7 +24,7 @@ path_follower:
     velocity_smoothing: 0.2      # Smoothing factor for velocity changes
     
     # Corner handling
-    corner_detection_angle: 0.3    # Corner detection threshold (radians)
+    corner_detection_angle: 0.3    # Corner detection threshold (radians) (in degrees: ~17 degrees)
     corner_speed_factor: 0.7       # Speed reduction factor in corners
     anticipation_distance: 2.0     # Look-ahead distance for corner detection (m)
     
