@@ -118,6 +118,23 @@ private:
                                      double cross_track_term, double steering_angle, 
                                      double steering_smoothing, double lateral_error);
     
+    /**
+     * @brief Calculate cumulative distance along path up to given index
+     * @param path Current path
+     * @param index Target index
+     * @return Cumulative distance in meters
+     */
+    double calculate_path_distance_at_index(const nav_msgs::msg::Path& path, int index);
+    
+    /**
+     * @brief Find vehicle's position along the path in Frenet coordinates
+     * @param path Current path
+     * @param vehicle Current vehicle state
+     * @return Pair of (closest_index, s_coordinate)
+     */
+    std::pair<int, double> find_vehicle_position_on_path(const nav_msgs::msg::Path& path, 
+                                                        const VehicleState& vehicle);
+    
     // ROS components
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
     rclcpp::Subscription<planning_custom_msgs::msg::PathWithVelocity>::SharedPtr path_with_velocity_sub_;

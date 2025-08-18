@@ -4,8 +4,8 @@ path_follower:
   ros__parameters:
     # Pure Pursuit parameters
     lookahead_distance: 2.5       # Base lookahead distance (m)
-    min_lookahead: 1.2           # Minimum lookahead distance (m) - slightly increased
-    max_lookahead: 4.0           # Maximum lookahead distance (m)
+    min_lookahead: 0.5           # Minimum lookahead distance (m) - slightly increased
+    max_lookahead: 3.0           # Maximum lookahead distance (m)
     lookahead_ratio: 0.4         # Dynamic lookahead: distance = velocity * ratio
     
     # Vehicle parameters
@@ -29,7 +29,7 @@ path_follower:
     anticipation_distance: 2.0     # Look-ahead distance for corner detection (m)
     
     # Controller Selection
-    use_stanley: true            # Controller type: true = Stanley controller, false = Pure Pursuit controller
+    use_stanley: false            # Controller type: true = Stanley controller, false = Pure Pursuit controller
     
     # Stanley controller parameters
     stanley_k_e: 2.8             # Cross-track error gain for Stanley controller (reduced for less oscillation)

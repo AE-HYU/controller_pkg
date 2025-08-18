@@ -163,7 +163,7 @@ void PathFollower::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     double vx = msg->twist.twist.linear.x;
     double vy = msg->twist.twist.linear.y;
     vehicle_state_.velocity = std::sqrt(vx*vx + vy*vy);
-    std::cout << "vehicle_state : " << vehicle_state_.velocity << std::endl;
+    // std::cout << "vehicle_state : " << vehicle_state_.velocity << std::endl;
     vehicle_state_.valid = true;
 }
 
@@ -294,20 +294,32 @@ std::pair<double, double> PathFollower::pure_pursuit_control() {
     return std::make_pair(steering_angle, speed);
 }
 
-int PathFollower::find_target_point(const nav_msgs::msg::Path& path, 
-                                   const VehicleState& vehicle, bool in_corner) {
-    if (path.poses.empty()) return -1;
+double PathFollower::calculate_path_distance_at_index(const nav_msgs::msg::Path& path, int index) {
+    if (index <= 0 || path.poses.empty()) {
+        return 0.0;
+    }
     
-    double lookahead = calculate_lookahead_distance(vehicle.velocity, in_corner);
+    double cumulative_distance = 0.0;
+    for (int i = 1; i <= index && i < static_cast<int>(path.poses.size()); ++i) {
+        double dx = path.poses[i].pose.position.x - path.poses[i-1].pose.position.x;
+        double dy = path.poses[i].pose.position.y - path.poses[i-1].pose.position.y;
+        cumulative_distance += std::sqrt(dx*dx + dy*dy);
+    }
     
-    // Start search from last target index to avoid going backwards
-    int start_index = std::max(0, last_target_index_);
+    return cumulative_distance;
+}
+
+std::pair<int, double> PathFollower::find_vehicle_position_on_path(const nav_msgs::msg::Path& path, 
+                                                                  const VehicleState& vehicle) {
+    if (path.poses.empty()) {
+        return std::make_pair(-1, 0.0);
+    }
     
     // Find closest point first
     double min_distance = std::numeric_limits<double>::max();
-    int closest_index = start_index;
+    int closest_index = 0;
     
-    for (int i = start_index; i < static_cast<int>(path.poses.size()); ++i) {
+    for (int i = 0; i < static_cast<int>(path.poses.size()); ++i) {
         double dx = path.poses[i].pose.position.x - vehicle.x;
         double dy = path.poses[i].pose.position.y - vehicle.y;
         double distance = std::sqrt(dx*dx + dy*dy);
@@ -316,24 +328,72 @@ int PathFollower::find_target_point(const nav_msgs::msg::Path& path,
             min_distance = distance;
             closest_index = i;
         }
-        
-        // If we're moving away, we found the closest point
-        if (distance > min_distance + 0.5) break;
     }
     
-    // Find lookahead point starting from closest point
-    for (int i = closest_index; i < static_cast<int>(path.poses.size()); ++i) {
-        double dx = path.poses[i].pose.position.x - vehicle.x;
-        double dy = path.poses[i].pose.position.y - vehicle.y;
-        double distance = std::sqrt(dx*dx + dy*dy);
+    // Calculate vehicle's s-coordinate by projecting onto the path segment
+    double vehicle_s = calculate_path_distance_at_index(path, closest_index);
+    
+    if (closest_index < static_cast<int>(path.poses.size()) - 1) {
+        // Project vehicle position onto the line segment between closest and next point
+        double x1 = path.poses[closest_index].pose.position.x;
+        double y1 = path.poses[closest_index].pose.position.y;
+        double x2 = path.poses[closest_index + 1].pose.position.x;
+        double y2 = path.poses[closest_index + 1].pose.position.y;
         
-        if (distance >= lookahead) {
-            last_target_index_ = i;
-            return i;
+        double path_dx = x2 - x1;
+        double path_dy = y2 - y1;
+        double segment_length_sq = path_dx*path_dx + path_dy*path_dy;
+        
+        if (segment_length_sq > 1e-6) {
+            double vehicle_dx = vehicle.x - x1;
+            double vehicle_dy = vehicle.y - y1;
+            
+            // Project onto segment (t = 0 at closest_index, t = 1 at next point)
+            double t = (vehicle_dx * path_dx + vehicle_dy * path_dy) / segment_length_sq;
+            t = std::clamp(t, 0.0, 1.0);
+            
+            // Add the projected distance to the cumulative distance
+            vehicle_s += t * std::sqrt(segment_length_sq);
         }
     }
     
-    // If no lookahead point found, use last point
+    return std::make_pair(closest_index, vehicle_s);
+}
+
+int PathFollower::find_target_point(const nav_msgs::msg::Path& path, 
+                                   const VehicleState& vehicle, bool in_corner) {
+    if (path.poses.empty()) return -1;
+    
+    double lookahead = calculate_lookahead_distance(vehicle.velocity, in_corner);
+    
+    // Get vehicle's position along the path (Frenet s-coordinate)
+    auto [closest_index, vehicle_s] = find_vehicle_position_on_path(path, vehicle);
+    if (closest_index < 0) return -1;
+    
+    // Target s-coordinate is vehicle's s + lookahead distance
+    double target_s = vehicle_s + lookahead;
+    
+    // Start search from closest index to avoid going backwards
+    int start_index = std::max(0, closest_index);
+    
+    // Find the point along the path that corresponds to target_s
+    double cumulative_s = calculate_path_distance_at_index(path, start_index);
+    
+    for (int i = start_index; i < static_cast<int>(path.poses.size()) - 1; ++i) {
+        double dx = path.poses[i+1].pose.position.x - path.poses[i].pose.position.x;
+        double dy = path.poses[i+1].pose.position.y - path.poses[i].pose.position.y;
+        double segment_length = std::sqrt(dx*dx + dy*dy);
+        
+        if (cumulative_s + segment_length >= target_s) {
+            // Found the segment containing our target s-coordinate
+            last_target_index_ = i + 1;
+            return i + 1;
+        }
+        
+        cumulative_s += segment_length;
+    }
+    
+    // If target_s is beyond the path, return the last point
     last_target_index_ = static_cast<int>(path.poses.size()) - 1;
     return last_target_index_;
 }
@@ -567,6 +627,8 @@ bool PathFollower::detect_upcoming_corner(const nav_msgs::msg::Path& path, const
     double max_curvature = calculate_path_curvature(path, check_start, check_end - check_start);
     
     // Also check current steering requirement
+    // Predict required steering about the lookahead point
+    // Lookahead point : configured anticipation distance along the path
     double predicted_steering = predict_required_steering(path, vehicle);
     
     // Corner detected if either curvature is high or predicted steering is large
@@ -618,27 +680,45 @@ double PathFollower::predict_required_steering(const nav_msgs::msg::Path& path, 
         return 0.0;
     }
     
-    // Find a point ahead on the path
-    double lookahead = config_.anticipation_distance;
+    // Use anticipation distance along the path (Frenet s-coordinate)
+    double lookahead_s = config_.anticipation_distance;
     
-    for (const auto& pose : path.poses) {
-        double dx = pose.pose.position.x - vehicle.x;
-        double dy = pose.pose.position.y - vehicle.y;
-        double distance = std::sqrt(dx*dx + dy*dy);
+    // Get vehicle's position along the path
+    auto [closest_index, vehicle_s] = find_vehicle_position_on_path(path, vehicle);
+    if (closest_index < 0) return 0.0;
+    
+    // Find point at target s-coordinate
+    double target_s = vehicle_s + lookahead_s;
+    double cumulative_s = calculate_path_distance_at_index(path, closest_index);
+    
+    for (int i = closest_index; i < static_cast<int>(path.poses.size()) - 1; ++i) {
+        double dx = path.poses[i+1].pose.position.x - path.poses[i].pose.position.x;
+        double dy = path.poses[i+1].pose.position.y - path.poses[i].pose.position.y;
+        double segment_length = std::sqrt(dx*dx + dy*dy);
         
-        if (distance >= lookahead) {
-            // Calculate what steering angle would be required to reach this point
+        if (cumulative_s + segment_length >= target_s) {
+            // Found the target point, calculate required steering
+            double target_x = path.poses[i+1].pose.position.x;
+            double target_y = path.poses[i+1].pose.position.y;
+            
+            double dx_to_target = target_x - vehicle.x;
+            double dy_to_target = target_y - vehicle.y;
+            
+            // Transform to vehicle coordinate frame
             double cos_yaw = std::cos(-vehicle.yaw);
             double sin_yaw = std::sin(-vehicle.yaw);
-            double local_x = dx * cos_yaw - dy * sin_yaw;
-            double local_y = dx * sin_yaw + dy * cos_yaw;
+            double local_x = dx_to_target * cos_yaw - dy_to_target * sin_yaw;
+            double local_y = dx_to_target * sin_yaw + dy_to_target * cos_yaw;
             
             if (local_x > 0.1) {  // Avoid division by zero
+                double distance = std::sqrt(local_x*local_x + local_y*local_y);
                 double curvature = 2.0 * local_y / (distance * distance);
                 return std::atan(config_.wheelbase * curvature);
             }
             break;
         }
+        
+        cumulative_s += segment_length;
     }
     
     return 0.0;
@@ -892,36 +972,32 @@ int PathFollower::find_target_point_for_velocity(const nav_msgs::msg::Path& path
                                                  const VehicleState& vehicle) {
     if (path.poses.empty()) return -1;
     
-    // Use a small lookahead for velocity lookup
-    double lookahead = 1.0; // Fixed 1m lookahead for velocity
+    // Use a small lookahead for velocity lookup (1m along path)
+    double lookahead_s = 1.0;
     
-    // Find closest point first
-    double min_distance = std::numeric_limits<double>::max();
-    int closest_index = 0;
+    // Get vehicle's position along the path
+    auto [closest_index, vehicle_s] = find_vehicle_position_on_path(path, vehicle);
+    if (closest_index < 0) return -1;
     
-    for (int i = 0; i < static_cast<int>(path.poses.size()); ++i) {
-        double dx = path.poses[i].pose.position.x - vehicle.x;
-        double dy = path.poses[i].pose.position.y - vehicle.y;
-        double distance = std::sqrt(dx*dx + dy*dy);
+    // Target s-coordinate for velocity lookup
+    double target_s = vehicle_s + lookahead_s;
+    
+    // Find the point that corresponds to target_s
+    double cumulative_s = calculate_path_distance_at_index(path, closest_index);
+    
+    for (int i = closest_index; i < static_cast<int>(path.poses.size()) - 1; ++i) {
+        double dx = path.poses[i+1].pose.position.x - path.poses[i].pose.position.x;
+        double dy = path.poses[i+1].pose.position.y - path.poses[i].pose.position.y;
+        double segment_length = std::sqrt(dx*dx + dy*dy);
         
-        if (distance < min_distance) {
-            min_distance = distance;
-            closest_index = i;
+        if (cumulative_s + segment_length >= target_s) {
+            return i + 1;
         }
+        
+        cumulative_s += segment_length;
     }
     
-    // Find lookahead point starting from closest point
-    for (int i = closest_index; i < static_cast<int>(path.poses.size()); ++i) {
-        double dx = path.poses[i].pose.position.x - vehicle.x;
-        double dy = path.poses[i].pose.position.y - vehicle.y;
-        double distance = std::sqrt(dx*dx + dy*dy);
-        
-        if (distance >= lookahead) {
-            return i;
-        }
-    }
-    
-    // If no lookahead point found, use last point
+    // If target_s is beyond the path, return the last point
     return static_cast<int>(path.poses.size()) - 1;
 }
 
