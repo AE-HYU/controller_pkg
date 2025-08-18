@@ -398,6 +398,7 @@ int PathFollower::find_target_point(const nav_msgs::msg::Path& path,
     return last_target_index_;
 }
 
+/////////////////////////////////////////////////////////////
 double PathFollower::calculate_lookahead_distance(double velocity, bool in_corner) {
     double dynamic_lookahead = velocity * config_.lookahead_ratio;
     
@@ -849,10 +850,18 @@ std::pair<double, double> PathFollower::stanley_method_control() {
     // Calculate target speed
     double speed = calculate_target_speed(steering_angle, lateral_error, in_corner, planner_velocity);
     
+    // Calculate front axle position for logging
+    double front_axle_x = vehicle.x + config_.wheelbase * std::cos(vehicle.yaw);
+    double front_axle_y = vehicle.y + config_.wheelbase * std::sin(vehicle.yaw);
+    
     // DEBUG: Log Stanley control behavior
     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
-        "Stanley Control: heading_err=%.3f, cross_track_err=%.2f, steering=%.3f, corner=%s", 
+        "Stanley Control (Front Axle): heading_err=%.3f°, cross_track_err=%.2fm, steering=%.3f°, corner=%s", 
         heading_error * 180/M_PI, cross_track_error, steering_angle * 180/M_PI, in_corner ? "YES" : "NO");
+
+    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+        "Front Axle: (%.2f, %.2f), Base Link: (%.2f, %.2f), Wheelbase: %.2fm", 
+        front_axle_x, front_axle_y, vehicle.x, vehicle.y, config_.wheelbase);
 
     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
         "k_e : %.3f, k_soft : %.3f", k_e, k_soft);
@@ -885,10 +894,14 @@ PathFollower::find_closest_point_on_path(const nav_msgs::msg::Path& path,
     int closest_index = 0;
     double cross_track_error = 0.0;
     
-    // Find the closest point on the path
+    // Calculate front axle position from base_link
+    double front_axle_x = vehicle.x + config_.wheelbase * std::cos(vehicle.yaw);
+    double front_axle_y = vehicle.y + config_.wheelbase * std::sin(vehicle.yaw);
+    
+    // Find the closest point on the path using front axle position
     for (int i = 0; i < static_cast<int>(path.poses.size()); ++i) {
-        double dx = path.poses[i].pose.position.x - vehicle.x;
-        double dy = path.poses[i].pose.position.y - vehicle.y;
+        double dx = path.poses[i].pose.position.x - front_axle_x;  // Use front axle
+        double dy = path.poses[i].pose.position.y - front_axle_y;  // Use front axle
         double distance = std::sqrt(dx*dx + dy*dy);
         
         if (distance < min_distance) {
@@ -912,21 +925,21 @@ PathFollower::find_closest_point_on_path(const nav_msgs::msg::Path& path,
         double path_length_sq = path_dx*path_dx + path_dy*path_dy;
         
         if (path_length_sq > 1e-6) {
-            // Vector from point 1 to vehicle
-            double vehicle_dx = vehicle.x - x1;
-            double vehicle_dy = vehicle.y - y1;
+            // Vector from point 1 to front axle (not vehicle base_link)
+            double front_axle_dx = front_axle_x - x1;
+            double front_axle_dy = front_axle_y - y1;
             
-            // Project vehicle position onto the line segment
-            double t = (vehicle_dx * path_dx + vehicle_dy * path_dy) / path_length_sq;
+            // Project front axle position onto the line segment
+            double t = (front_axle_dx * path_dx + front_axle_dy * path_dy) / path_length_sq;
             t = std::clamp(t, 0.0, 1.0); // Clamp to line segment
             
             // Find projection point
             double proj_x = x1 + t * path_dx;
             double proj_y = y1 + t * path_dy;
             
-            // Calculate signed cross-track error (positive = left of path)
-            double to_vehicle_x = vehicle.x - proj_x;
-            double to_vehicle_y = vehicle.y - proj_y;
+            // Calculate signed cross-track error from front axle (positive = left of path)
+            double to_front_axle_x = front_axle_x - proj_x;
+            double to_front_axle_y = front_axle_y - proj_y;
             
             // Normalize path direction
             double path_length = std::sqrt(path_length_sq);
@@ -934,7 +947,7 @@ PathFollower::find_closest_point_on_path(const nav_msgs::msg::Path& path,
             double path_unit_y = path_dy / path_length;
             
             // Cross product gives signed distance (right-hand rule)
-            cross_track_error = to_vehicle_x * (-path_unit_y) + to_vehicle_y * path_unit_x;
+            cross_track_error = to_front_axle_x * (-path_unit_y) + to_front_axle_y * path_unit_x;
             
             // Update closest point to projection
             closest_point.x = proj_x;
