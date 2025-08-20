@@ -1,4 +1,5 @@
 #include "path_follower_pkg/path_follower.hpp"
+#include <tf2/utils.h>  // Add this include for tf2::toMsg
 
 namespace path_follower_pkg {
 
@@ -87,11 +88,7 @@ bool PathFollower::initialize() {
         RCLCPP_INFO(this->get_logger(), "Stanley analysis data will be published to /stanley_analysis");
     }
     
-    // Initialize subscribers  
-    path_sub_ = this->create_subscription<nav_msgs::msg::Path>(
-        "/planned_path", 10,
-        std::bind(&PathFollower::path_callback, this, std::placeholders::_1));
-        
+    // Initialize subscribers (only path_with_velocity and odom)
     path_with_velocity_sub_ = this->create_subscription<planning_custom_msgs::msg::PathWithVelocity>(
         "/planned_path_with_velocity", 10,
         std::bind(&PathFollower::path_with_velocity_callback, this, std::placeholders::_1));
@@ -107,26 +104,9 @@ bool PathFollower::initialize() {
     
     last_path_time_ = this->get_clock()->now();
     
-    return true;
-}
-
-void PathFollower::path_callback(const nav_msgs::msg::Path::SharedPtr msg) {
-    if (!is_path_valid(*msg)) {
-        RCLCPP_WARN(this->get_logger(), "Received invalid path");
-        return;
-    }
-
-    // Print path size
-    // 16개라고 나오긴 함.
-    // RCLCPP_INFO(this->get_logger(), "Received path with %zu points", msg->poses.size());
-    std::lock_guard<std::mutex> lock(path_mutex_);
-    current_path_ = *msg;
-    path_received_ = true;
-    last_path_time_ = this->get_clock()->now();
-    last_target_index_ = 0;  // Reset target index for new path
+    RCLCPP_INFO(this->get_logger(), "Subscribing only to /planned_path_with_velocity topic");
     
-    RCLCPP_DEBUG(this->get_logger(), "Received new path with %zu points", 
-                 current_path_.poses.size());
+    return true;
 }
 
 void PathFollower::path_with_velocity_callback(const planning_custom_msgs::msg::PathWithVelocity::SharedPtr msg) {
@@ -136,14 +116,37 @@ void PathFollower::path_with_velocity_callback(const planning_custom_msgs::msg::
     }
     
     std::lock_guard<std::mutex> lock(path_mutex_);
+    
+    // Store the velocity path
     current_velocity_path_ = *msg;
     has_velocity_path_ = true;
+    
+    // Convert PathWithVelocity to nav_msgs::Path for compatibility with existing algorithms
+    current_path_.header = msg->header;
+    current_path_.poses.clear();
+    current_path_.poses.reserve(msg->points.size());
+    
+    for (const auto& point : msg->points) {
+        geometry_msgs::msg::PoseStamped pose_stamped;
+        pose_stamped.header = msg->header;
+        pose_stamped.pose.position.x = point.x;
+        pose_stamped.pose.position.y = point.y;
+        pose_stamped.pose.position.z = 0.0;
+        
+        // Convert yaw to quaternion
+        tf2::Quaternion q;
+        q.setRPY(0, 0, point.yaw);
+        pose_stamped.pose.orientation = tf2::toMsg(q);
+        
+        current_path_.poses.push_back(pose_stamped);
+    }
+    
     path_received_ = true;
     last_path_time_ = this->get_clock()->now();
     last_target_index_ = 0;  // Reset target index for new path
     
-    RCLCPP_DEBUG(this->get_logger(), "Received new velocity path with %zu points, velocity_scale_factor=%.2f", 
-                 current_velocity_path_.points.size(), config_.velocity_scale_factor);
+    RCLCPP_INFO(this->get_logger(), "Received and converted velocity path with %zu points", 
+                 current_velocity_path_.points.size());
 }
 
 void PathFollower::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
@@ -805,7 +808,7 @@ std::pair<double, double> PathFollower::stanley_method_control() {
         return std::make_pair(0.0, 0.0);
     }
     
-    // Find closest point on path and calculate cross-track error
+    // Find closest point on path compared with front_axle position and calculate cross-track error
     auto [closest_point, closest_index, cross_track_error] = find_closest_point_on_path(path, vehicle);
     
     // Calculate path heading at closest point
@@ -829,16 +832,16 @@ std::pair<double, double> PathFollower::stanley_method_control() {
     
     double steering_angle = heading_gain * heading_error + cross_track_term;
     
-    // Apply steering smoothing to reduce oscillations (low-pass filter)
-    double steering_smoothing = config_.stanley_steering_smoothing; // Use configurable smoothing factor
-    steering_angle = previous_steering_angle_ * steering_smoothing + 
-                     steering_angle * (1.0 - steering_smoothing);
+    // // Apply steering smoothing to reduce oscillations (low-pass filter)
+    // double steering_smoothing = config_.stanley_steering_smoothing; // Use configurable smoothing factor
+    // steering_angle = previous_steering_angle_ * steering_smoothing + 
+    //                  steering_angle * (1.0 - steering_smoothing);
     
     // Update previous steering angle for next iteration
-    previous_steering_angle_ = steering_angle;
+    // previous_steering_angle_ = steering_angle;
     
     // Detect corners for speed adjustment
-    bool in_corner = detect_upcoming_corner(path, vehicle);
+    // bool in_corner = detect_upcoming_corner(path, vehicle);
     
     // Calculate lateral error for speed adjustment
     double lateral_error = std::abs(cross_track_error);
@@ -848,23 +851,8 @@ std::pair<double, double> PathFollower::stanley_method_control() {
     double planner_velocity = get_velocity_at_point(target_index);
     
     // Calculate target speed
-    double speed = calculate_target_speed(steering_angle, lateral_error, in_corner, planner_velocity);
-    
-    // Calculate front axle position for logging
-    double front_axle_x = vehicle.x + config_.wheelbase * std::cos(vehicle.yaw);
-    double front_axle_y = vehicle.y + config_.wheelbase * std::sin(vehicle.yaw);
-    
-    // DEBUG: Log Stanley control behavior
-    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
-        "Stanley Control (Front Axle): heading_err=%.3f°, cross_track_err=%.2fm, steering=%.3f°, corner=%s", 
-        heading_error * 180/M_PI, cross_track_error, steering_angle * 180/M_PI, in_corner ? "YES" : "NO");
-
-    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-        "Front Axle: (%.2f, %.2f), Base Link: (%.2f, %.2f), Wheelbase: %.2fm", 
-        front_axle_x, front_axle_y, vehicle.x, vehicle.y, config_.wheelbase);
-
-    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
-        "k_e : %.3f, k_soft : %.3f", k_e, k_soft);
+    // double speed = calculate_target_speed(steering_angle, lateral_error, in_corner, planner_velocity);
+    double speed = planner_velocity;
     
     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
                  "Stanley: heading_err=%.3f, cross_track_err=%.3f, cross_track_term=%.3f, total=%.3f",
@@ -874,9 +862,6 @@ std::pair<double, double> PathFollower::stanley_method_control() {
     steering_angle = std::clamp(steering_angle, -config_.max_steering_angle, 
                                config_.max_steering_angle);
     speed = std::clamp(speed, config_.min_speed, config_.max_speed);
-
-    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
-        "steering_angle : %.3f, speed : %.3f", steering_angle*180/M_PI, speed);
 
     // Publish analysis data for PlotJuggler
     publish_stanley_analysis_data(vehicle.yaw, path_heading, heading_error, 

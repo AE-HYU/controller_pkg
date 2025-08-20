@@ -80,7 +80,6 @@ private:
     bool initialize();
     
     // Callbacks
-    void path_callback(const nav_msgs::msg::Path::SharedPtr msg);
     void path_with_velocity_callback(const planning_custom_msgs::msg::PathWithVelocity::SharedPtr msg);
     void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
     void control_timer_callback();
@@ -135,8 +134,8 @@ private:
     std::pair<int, double> find_vehicle_position_on_path(const nav_msgs::msg::Path& path, 
                                                         const VehicleState& vehicle);
     
-    // ROS components
-    rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
+    // Subscriptions and Publishers
+    // Remove: rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
     rclcpp::Subscription<planning_custom_msgs::msg::PathWithVelocity>::SharedPtr path_with_velocity_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
     rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
@@ -144,11 +143,11 @@ private:
     rclcpp::TimerBase::SharedPtr control_timer_;
     
     // State variables
-    nav_msgs::msg::Path current_path_;
+    nav_msgs::msg::Path current_path_;  // Keep this for compatibility with path following algorithms
     planning_custom_msgs::msg::PathWithVelocity current_velocity_path_;
     bool has_velocity_path_;
     double smoothed_velocity_;
-    double previous_steering_angle_;  // For steering smoothing
+    double previous_steering_angle_;
     VehicleState vehicle_state_;
     ControllerConfig config_;
     
