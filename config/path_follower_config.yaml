@@ -21,12 +21,12 @@ path_follower:
     # Planner velocity integration
     use_planner_velocity: true   # Use velocity from planner (PathWithVelocity)
     velocity_scale_factor: 1.3   # Scale factor for planner velocity (80% of planned velocity)
-    velocity_smoothing: 0.2      # Smoothing factor for velocity changes
+    velocity_smoothing: 0.3      # Smoothing factor for velocity changes
     
     # Corner handling
     corner_detection_angle: 0.3    # Corner detection threshold (radians) (in degrees: ~17 degrees)
     corner_speed_factor: 0.7       # Speed reduction factor in corners
-    anticipation_distance: 2.0     # Look-ahead distance for corner detection (m)
+    anticipation_distance: 1.5     # Look-ahead distance for corner detection (m)
     
     # Controller Selection
     use_stanley: true             # Controller type: true = Stanley controller, false = Pure Pursuit controller
