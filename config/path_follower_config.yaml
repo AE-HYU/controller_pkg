@@ -20,7 +20,7 @@ path_follower:
     
     # Planner velocity integration
     use_planner_velocity: true   # Use velocity from planner (PathWithVelocity)
-    velocity_scale_factor: 1.4   # Scale factor for planner velocity (80% of planned velocity)
+    velocity_scale_factor: 0.9   # Scale factor for planner velocity (80% of planned velocity)
     velocity_smoothing: 0.3      # Smoothing factor for velocity changes
     
     # Corner handling
