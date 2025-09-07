@@ -18,7 +18,7 @@
 #include <thread>
 #include <chrono>
 
-namespace path_follower_pkg {
+namespace controller_pkg {
 
 struct VehicleState {
     double x = 0.0;
@@ -68,10 +68,10 @@ struct ControllerConfig {
     bool use_stanley = true;          // Use Stanley controller flag
 };
 
-class PathFollower : public rclcpp::Node {
+class Controller : public rclcpp::Node {
 public:
-    PathFollower();
-    virtual ~PathFollower();
+    Controller();
+    virtual ~Controller();
     
     // Public safety functions
     void shutdown_handler();

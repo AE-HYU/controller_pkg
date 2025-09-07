@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(path_follower_pkg)
+project(controller_pkg)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -22,13 +22,13 @@ find_package(planning_custom_msgs REQUIRED)
 include_directories(include)
 
 # create executables
-add_executable(path_follower_node
-  src/path_follower_node.cpp
-  src/path_follower.cpp
+add_executable(controller_node
+  src/controller_node.cpp
+  src/controller.cpp
 )
 
 # specify dependencies
-ament_target_dependencies(path_follower_node
+ament_target_dependencies(controller_node
   rclcpp
   std_msgs
   nav_msgs
@@ -42,7 +42,7 @@ ament_target_dependencies(path_follower_node
 
 # install targets
 install(TARGETS
-  path_follower_node
+  controller_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

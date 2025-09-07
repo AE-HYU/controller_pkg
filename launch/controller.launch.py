@@ -7,13 +7,13 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     # Get package share directory
-    pkg_share = FindPackageShare('path_follower_pkg')
+    pkg_share = FindPackageShare('controller_pkg')
     
     # Path to config file
     config_file = PathJoinSubstitution([
         pkg_share, 
         'config', 
-        'path_follower_config.yaml'
+        'controller_config.yaml'
     ])
     
     # Launch arguments
@@ -23,27 +23,28 @@ def generate_launch_description():
         description='Use simulation mode (ego_racecar/odom) if true, real car mode (/pf/pose/odom) if false'
     )
     
-    # Path follower node for simulation mode
-    path_follower_sim_node = Node(
-        package='path_follower_pkg',
-        executable='path_follower_node',
-        name='path_follower',
+    # Controller node for simulation mode
+    controller_sim_node = Node(
+        package='controller_pkg',
+        executable='controller_node',
+        name='controller',
         parameters=[config_file],
         output='screen',
         emulate_tty=True,
         remappings=[
             ('/planned_path', '/planned_path'),
-            ('/odom', '/ego_racecar/odom'),
+            # ('/odom', '/ego_racecar/odom'),
+            ('/odom', '/pf/pose/odom'), # MCL odom
             ('/drive', '/drive'),
         ],
         condition=IfCondition(LaunchConfiguration('sim_mode'))
     )
     
-    # Path follower node for real car mode
-    path_follower_real_node = Node(
-        package='path_follower_pkg',
-        executable='path_follower_node',
-        name='path_follower',
+    # Controller node for real car mode
+    controller_real_node = Node(
+        package='controller_pkg',
+        executable='controller_node',
+        name='controller',
         parameters=[config_file],
         output='screen',
         emulate_tty=True,
@@ -57,6 +58,6 @@ def generate_launch_description():
     
     return LaunchDescription([
         sim_mode_arg,
-        path_follower_sim_node,
-        path_follower_real_node,
+        controller_sim_node,
+        controller_real_node,
     ])

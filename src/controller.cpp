@@ -1,10 +1,10 @@
-#include "path_follower_pkg/path_follower.hpp"
+#include "controller_pkg/controller.hpp"
 #include <tf2/utils.h>  // Add this include for tf2::toMsg
 
-namespace path_follower_pkg {
+namespace controller_pkg {
 
-PathFollower::PathFollower() 
-    : Node("path_follower"),
+Controller::Controller() 
+    : Node("controller"),
       path_received_(false),
       emergency_stop_(false),
       last_target_index_(0),
@@ -14,19 +14,19 @@ PathFollower::PathFollower()
       shutdown_requested_(false) {
     
     if (!initialize()) {
-        RCLCPP_ERROR(this->get_logger(), "Failed to initialize path follower");
+        RCLCPP_ERROR(this->get_logger(), "Failed to initialize controller");
         return;
     }
     
-    RCLCPP_INFO(this->get_logger(), "Path Follower initialized successfully");
+    RCLCPP_INFO(this->get_logger(), "Controller initialized successfully");
 }
 
-PathFollower::~PathFollower() {
+Controller::~Controller() {
     // Ensure car stops when node is destroyed
     publish_stop_command();
 }
 
-bool PathFollower::initialize() {
+bool Controller::initialize() {
     // Declare parameters
     this->declare_parameter("lookahead_distance", config_.lookahead_distance);
     this->declare_parameter("min_lookahead", config_.min_lookahead);
@@ -91,16 +91,16 @@ bool PathFollower::initialize() {
     // Initialize subscribers (only path_with_velocity and odom)
     path_with_velocity_sub_ = this->create_subscription<planning_custom_msgs::msg::PathWithVelocity>(
         "/planned_path_with_velocity", 10,
-        std::bind(&PathFollower::path_with_velocity_callback, this, std::placeholders::_1));
+        std::bind(&Controller::path_with_velocity_callback, this, std::placeholders::_1));
         
     odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
         "/odom", 10,
-        std::bind(&PathFollower::odom_callback, this, std::placeholders::_1));
+        std::bind(&Controller::odom_callback, this, std::placeholders::_1));
     
     // Initialize control timer (50 Hz)
     auto timer_period = std::chrono::milliseconds(20);
     control_timer_ = this->create_wall_timer(
-        timer_period, std::bind(&PathFollower::control_timer_callback, this));
+        timer_period, std::bind(&Controller::control_timer_callback, this));
     
     last_path_time_ = this->get_clock()->now();
     
@@ -109,7 +109,7 @@ bool PathFollower::initialize() {
     return true;
 }
 
-void PathFollower::path_with_velocity_callback(const planning_custom_msgs::msg::PathWithVelocity::SharedPtr msg) {
+void Controller::path_with_velocity_callback(const planning_custom_msgs::msg::PathWithVelocity::SharedPtr msg) {
     if (msg->points.empty()) {
         RCLCPP_WARN(this->get_logger(), "Received empty velocity path");
         return;
@@ -149,7 +149,7 @@ void PathFollower::path_with_velocity_callback(const planning_custom_msgs::msg::
                  current_velocity_path_.points.size());
 }
 
-void PathFollower::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+void Controller::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     std::lock_guard<std::mutex> lock(state_mutex_);
     
     vehicle_state_.x = msg->pose.pose.position.x;
@@ -170,7 +170,7 @@ void PathFollower::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     vehicle_state_.valid = true;
 }
 
-void PathFollower::control_timer_callback() {
+void Controller::control_timer_callback() {
     // Check if shutdown was requested
     if (shutdown_requested_.load()) {
         publish_stop_command();
@@ -228,7 +228,7 @@ void PathFollower::control_timer_callback() {
                  steering_angle, speed);
 }
 
-std::pair<double, double> PathFollower::pure_pursuit_control() {
+std::pair<double, double> Controller::pure_pursuit_control() {
     nav_msgs::msg::Path path;
     VehicleState vehicle;
     
@@ -297,7 +297,7 @@ std::pair<double, double> PathFollower::pure_pursuit_control() {
     return std::make_pair(steering_angle, speed);
 }
 
-double PathFollower::calculate_path_distance_at_index(const nav_msgs::msg::Path& path, int index) {
+double Controller::calculate_path_distance_at_index(const nav_msgs::msg::Path& path, int index) {
     if (index <= 0 || path.poses.empty()) {
         return 0.0;
     }
@@ -312,7 +312,7 @@ double PathFollower::calculate_path_distance_at_index(const nav_msgs::msg::Path&
     return cumulative_distance;
 }
 
-std::pair<int, double> PathFollower::find_vehicle_position_on_path(const nav_msgs::msg::Path& path, 
+std::pair<int, double> Controller::find_vehicle_position_on_path(const nav_msgs::msg::Path& path, 
                                                                   const VehicleState& vehicle) {
     if (path.poses.empty()) {
         return std::make_pair(-1, 0.0);
@@ -363,7 +363,7 @@ std::pair<int, double> PathFollower::find_vehicle_position_on_path(const nav_msg
     return std::make_pair(closest_index, vehicle_s);
 }
 
-int PathFollower::find_target_point(const nav_msgs::msg::Path& path, 
+int Controller::find_target_point(const nav_msgs::msg::Path& path, 
                                    const VehicleState& vehicle, bool in_corner) {
     if (path.poses.empty()) return -1;
     
@@ -402,7 +402,7 @@ int PathFollower::find_target_point(const nav_msgs::msg::Path& path,
 }
 
 /////////////////////////////////////////////////////////////
-double PathFollower::calculate_lookahead_distance(double velocity, bool in_corner) {
+double Controller::calculate_lookahead_distance(double velocity, bool in_corner) {
     double dynamic_lookahead = velocity * config_.lookahead_ratio;
     
     // Slightly reduce lookahead distance in corners for better tracking
@@ -414,7 +414,7 @@ double PathFollower::calculate_lookahead_distance(double velocity, bool in_corne
     return std::clamp(dynamic_lookahead, config_.min_lookahead, config_.max_lookahead);
 }
 
-double PathFollower::calculate_steering_angle(double target_x, double target_y, 
+double Controller::calculate_steering_angle(double target_x, double target_y, 
                                              const VehicleState& vehicle) {
     // Transform target point to vehicle coordinate frame
     double dx = target_x - vehicle.x;
@@ -443,7 +443,7 @@ double PathFollower::calculate_steering_angle(double target_x, double target_y,
     return steering_angle;
 }
 
-double PathFollower::calculate_cross_track_correction(const nav_msgs::msg::Path& path, const VehicleState& vehicle, int target_index) {
+double Controller::calculate_cross_track_correction(const nav_msgs::msg::Path& path, const VehicleState& vehicle, int target_index) {
     if (path.poses.empty() || target_index < 0 || target_index >= static_cast<int>(path.poses.size())) {
         return 0.0;
     }
@@ -508,7 +508,7 @@ double PathFollower::calculate_cross_track_correction(const nav_msgs::msg::Path&
     return 0.0;
 }
 
-double PathFollower::calculate_target_speed(double steering_angle, double lateral_error, bool in_corner, double planner_velocity) {
+double Controller::calculate_target_speed(double steering_angle, double lateral_error, bool in_corner, double planner_velocity) {
     double base_speed;
     
     // Use planner velocity if available and enabled
@@ -553,13 +553,13 @@ double PathFollower::calculate_target_speed(double steering_angle, double latera
     return std::max(target_speed, config_.min_speed);
 }
 
-double PathFollower::normalize_angle(double angle) {
+double Controller::normalize_angle(double angle) {
     while (angle > M_PI) angle -= 2.0 * M_PI;
     while (angle < -M_PI) angle += 2.0 * M_PI;
     return angle;
 }
 
-double PathFollower::distance_to_path(const nav_msgs::msg::Path& path, 
+double Controller::distance_to_path(const nav_msgs::msg::Path& path, 
                                      const VehicleState& vehicle) {
     if (path.poses.empty()) return 0.0;
     
@@ -575,7 +575,7 @@ double PathFollower::distance_to_path(const nav_msgs::msg::Path& path,
     return min_distance;
 }
 
-bool PathFollower::is_path_valid(const nav_msgs::msg::Path& path) {
+bool Controller::is_path_valid(const nav_msgs::msg::Path& path) {
     if (path.poses.empty()) {
         return false;
     }
@@ -587,7 +587,7 @@ bool PathFollower::is_path_valid(const nav_msgs::msg::Path& path) {
     return true;
 }
 
-double PathFollower::get_velocity_at_point(int target_index) const {
+double Controller::get_velocity_at_point(int target_index) const {
     if (!has_velocity_path_ || target_index < 0 || 
         target_index >= static_cast<int>(current_velocity_path_.points.size())) {
         return -1.0; // Invalid velocity
@@ -596,7 +596,7 @@ double PathFollower::get_velocity_at_point(int target_index) const {
     return current_velocity_path_.points[target_index].velocity;
 }
 
-bool PathFollower::detect_upcoming_corner(const nav_msgs::msg::Path& path, const VehicleState& vehicle) {
+bool Controller::detect_upcoming_corner(const nav_msgs::msg::Path& path, const VehicleState& vehicle) {
     if (path.poses.size() < 5) {
         return false;
     }
@@ -642,7 +642,7 @@ bool PathFollower::detect_upcoming_corner(const nav_msgs::msg::Path& path, const
     return high_curvature || high_steering;
 }
 
-double PathFollower::calculate_path_curvature(const nav_msgs::msg::Path& path, int start_idx, int samples) {
+double Controller::calculate_path_curvature(const nav_msgs::msg::Path& path, int start_idx, int samples) {
     if (start_idx + samples >= static_cast<int>(path.poses.size()) || samples < 3) {
         return 0.0;
     }
@@ -679,7 +679,7 @@ double PathFollower::calculate_path_curvature(const nav_msgs::msg::Path& path, i
     return max_curvature;
 }
 
-double PathFollower::predict_required_steering(const nav_msgs::msg::Path& path, const VehicleState& vehicle) {
+double Controller::predict_required_steering(const nav_msgs::msg::Path& path, const VehicleState& vehicle) {
     if (path.poses.size() < 2) {
         return 0.0;
     }
@@ -728,7 +728,7 @@ double PathFollower::predict_required_steering(const nav_msgs::msg::Path& path, 
     return 0.0;
 }
 
-void PathFollower::publish_stop_command() {
+void Controller::publish_stop_command() {
     auto drive_msg = ackermann_msgs::msg::AckermannDriveStamped();
     drive_msg.header.stamp = this->get_clock()->now();
     drive_msg.header.frame_id = "base_link";
@@ -744,7 +744,7 @@ void PathFollower::publish_stop_command() {
                          "Publishing stop command - Vehicle stopped for safety");
 }
 
-void PathFollower::shutdown_handler() {
+void Controller::shutdown_handler() {
     RCLCPP_WARN(this->get_logger(), "Shutdown signal received - stopping vehicle safely");
     shutdown_requested_.store(true);
     
@@ -755,7 +755,7 @@ void PathFollower::shutdown_handler() {
     }
 }
 
-void PathFollower::publish_stanley_analysis_data(double vehicle_yaw, double path_heading, double heading_error,
+void Controller::publish_stanley_analysis_data(double vehicle_yaw, double path_heading, double heading_error,
                                                 double cross_track_term, double steering_angle, 
                                                 double steering_smoothing, double lateral_error) {
     if (!stanley_analysis_pub_) {
@@ -793,7 +793,7 @@ void PathFollower::publish_stanley_analysis_data(double vehicle_yaw, double path
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 // Add the Stanley controller methods here, within the namespace and with proper class scope
-std::pair<double, double> PathFollower::stanley_method_control() {
+std::pair<double, double> Controller::stanley_method_control() {
     nav_msgs::msg::Path path;
     VehicleState vehicle;
     
@@ -872,7 +872,7 @@ std::pair<double, double> PathFollower::stanley_method_control() {
 }
 
 std::tuple<geometry_msgs::msg::Point, int, double> 
-PathFollower::find_closest_point_on_path(const nav_msgs::msg::Path& path, 
+Controller::find_closest_point_on_path(const nav_msgs::msg::Path& path, 
                                          const VehicleState& vehicle) {
     geometry_msgs::msg::Point closest_point;
     double min_distance = std::numeric_limits<double>::max();
@@ -943,7 +943,7 @@ PathFollower::find_closest_point_on_path(const nav_msgs::msg::Path& path,
     return std::make_tuple(closest_point, closest_index, cross_track_error);
 }
 
-double PathFollower::calculate_path_heading_at_point(const nav_msgs::msg::Path& path, int index) {
+double Controller::calculate_path_heading_at_point(const nav_msgs::msg::Path& path, int index) {
     if (path.poses.empty() || index < 0 || index >= static_cast<int>(path.poses.size())) {
         return 0.0;
     }
@@ -966,7 +966,7 @@ double PathFollower::calculate_path_heading_at_point(const nav_msgs::msg::Path& 
     return std::atan2(dy, dx);
 }
 
-int PathFollower::find_target_point_for_velocity(const nav_msgs::msg::Path& path, 
+int Controller::find_target_point_for_velocity(const nav_msgs::msg::Path& path, 
                                                  const VehicleState& vehicle) {
     if (path.poses.empty()) return -1;
     

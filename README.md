@@ -1,6 +1,6 @@
-# Lattice Path Follower F1TENTH
+# Controller Package F1TENTH
 
-High-precision path following controller for F1TENTH autonomous racing. Executes planned trajectories with velocity control and safety monitoring.
+High-precision vehicle controller for F1TENTH autonomous racing. Executes planned trajectories with velocity control and safety monitoring.
 
 Final component of the F1TENTH autonomous racing system - converts planned paths into drive commands.
 
@@ -8,17 +8,14 @@ Final component of the F1TENTH autonomous racing system - converts planned paths
 
 ```bash
 # Build (from workspace root)
-colcon build --packages-select lattice_path_follower_f1tenth --symlink-install
+colcon build --packages-select controller_pkg --symlink-install
 source install/setup.bash
 
 # For Real Car
-ros2 launch path_follower_pkg path_follower.launch.py sim_mode:=false
+ros2 launch controller_pkg controller.launch.py sim_mode:=false
 
 # For Simulation (default)
-ros2 launch path_follower_pkg path_follower.launch.py sim_mode:=true
-
-# With Safety Monitor
-ros2 launch path_follower_pkg path_follower_with_safety.launch.py sim_mode:=true
+ros2 launch controller_pkg controller.launch.py sim_mode:=true
 ```
 
 ## Prerequisites
@@ -47,7 +44,7 @@ ros2 launch path_follower_pkg path_follower_with_safety.launch.py sim_mode:=true
 
 ## Configuration
 
-Edit `config/path_follower_config.yaml` to tune:
+Edit `config/controller_config.yaml` to tune:
 
 ### Control Parameters
 - **Lookahead Distance**: How far ahead to target on path
@@ -62,7 +59,7 @@ Edit `config/path_follower_config.yaml` to tune:
 
 ## Control Algorithm
 
-The path follower uses a **hybrid control approach**:
+The controller uses a **hybrid control approach**:
 
 1. **Path Tracking**: Pure pursuit for smooth steering
 2. **Velocity Control**: PID controller for speed regulation
@@ -81,8 +78,8 @@ Velocity Profile → Speed Controller → Throttle/Brake → Ackermann Drive
 The safety monitor provides additional collision protection:
 
 ```bash
-# Launch with safety monitor
-ros2 launch path_follower_pkg path_follower_with_safety.launch.py
+# Launch with safety monitor (if available)
+ros2 launch controller_pkg controller_with_safety.launch.py
 ```
 
 **Safety Features:**
@@ -90,7 +87,7 @@ ros2 launch path_follower_pkg path_follower_with_safety.launch.py
 - **Speed Limiting**: Reduce speed in tight spaces
 - **Rollback**: Return to last safe state if needed
 
-Configure safety parameters in `config/safety_monitor_config.yaml`.
+Configure safety parameters in the controller configuration file.
 
 ## Key Topics
 
@@ -112,7 +109,7 @@ Configure safety parameters in `config/safety_monitor_config.yaml`.
 1. Localization (particle filter)
 2. Hardware/Simulation bridge  
 3. Path planner (lattice planner)
-4. **→ Path Follower ←**
+4. **→ Controller ←**
 
 **System Data Flow:**
 ```

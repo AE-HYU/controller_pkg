@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypeset="xsd"?>
 <package format="3">
-  <name>path_follower_pkg</name>
+  <name>controller_pkg</name>
   <version>0.0.0</version>
-  <description>Path following controller for lattice planner</description>
+  <description>Vehicle controller package for lattice planner</description>
   <maintainer email="journeyofbabo@gmail.com">Jisang Yun</maintainer>
   <license>Apache-2.0</license>
 
