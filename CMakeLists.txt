@@ -23,8 +23,8 @@ include_directories(include)
 
 # create executables
 add_executable(controller_node
-  src/controller_node.cpp
   src/controller.cpp
+  src/utils.cpp
 )
 
 # specify dependencies

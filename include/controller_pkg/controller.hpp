@@ -17,16 +17,9 @@
 #include <atomic>
 #include <thread>
 #include <chrono>
+#include "controller_pkg/utils.hpp"
 
 namespace controller_pkg {
-
-struct VehicleState {
-    double x = 0.0;
-    double y = 0.0;
-    double yaw = 0.0;
-    double velocity = 0.0;
-    bool valid = false;
-};
 
 struct ControllerConfig {
     // Pure Pursuit parameters
@@ -100,13 +93,7 @@ private:
 
     // Corner detection and handling
     bool detect_upcoming_corner(const nav_msgs::msg::Path& path, const VehicleState& vehicle);
-    double calculate_path_curvature(const nav_msgs::msg::Path& path, int start_idx, int samples = 5);
     double predict_required_steering(const nav_msgs::msg::Path& path, const VehicleState& vehicle);
-    
-    // Utility functions
-    double normalize_angle(double angle);
-    double distance_to_path(const nav_msgs::msg::Path& path, const VehicleState& vehicle);
-    bool is_path_valid(const nav_msgs::msg::Path& path);
     double get_velocity_at_point(int target_index) const;
     
     // Safety functions
@@ -117,13 +104,6 @@ private:
                                      double cross_track_term, double steering_angle, 
                                      double steering_smoothing, double lateral_error);
     
-    /**
-     * @brief Calculate cumulative distance along path up to given index
-     * @param path Current path
-     * @param index Target index
-     * @return Cumulative distance in meters
-     */
-    double calculate_path_distance_at_index(const nav_msgs::msg::Path& path, int index);
     
     /**
      * @brief Find vehicle's position along the path in Frenet coordinates

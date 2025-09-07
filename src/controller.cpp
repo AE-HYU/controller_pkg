@@ -1,5 +1,7 @@
 #include "controller_pkg/controller.hpp"
 #include <tf2/utils.h>  // Add this include for tf2::toMsg
+#include <csignal>
+#include <memory>
 
 namespace controller_pkg {
 
@@ -271,7 +273,7 @@ std::pair<double, double> Controller::pure_pursuit_control() {
                  pure_pursuit_angle, cross_track_correction, steering_angle);
     
     // Calculate lateral error for speed adjustment
-    double lateral_error = distance_to_path(path, vehicle);
+    double lateral_error = utils::distance_to_path(path, vehicle);
     
     // Get velocity from planner if available
     double planner_velocity = get_velocity_at_point(target_index);
@@ -297,20 +299,6 @@ std::pair<double, double> Controller::pure_pursuit_control() {
     return std::make_pair(steering_angle, speed);
 }
 
-double Controller::calculate_path_distance_at_index(const nav_msgs::msg::Path& path, int index) {
-    if (index <= 0 || path.poses.empty()) {
-        return 0.0;
-    }
-    
-    double cumulative_distance = 0.0;
-    for (int i = 1; i <= index && i < static_cast<int>(path.poses.size()); ++i) {
-        double dx = path.poses[i].pose.position.x - path.poses[i-1].pose.position.x;
-        double dy = path.poses[i].pose.position.y - path.poses[i-1].pose.position.y;
-        cumulative_distance += std::sqrt(dx*dx + dy*dy);
-    }
-    
-    return cumulative_distance;
-}
 
 std::pair<int, double> Controller::find_vehicle_position_on_path(const nav_msgs::msg::Path& path, 
                                                                   const VehicleState& vehicle) {
@@ -334,7 +322,7 @@ std::pair<int, double> Controller::find_vehicle_position_on_path(const nav_msgs:
     }
     
     // Calculate vehicle's s-coordinate by projecting onto the path segment
-    double vehicle_s = calculate_path_distance_at_index(path, closest_index);
+    double vehicle_s = utils::calculate_path_distance_at_index(path, closest_index);
     
     if (closest_index < static_cast<int>(path.poses.size()) - 1) {
         // Project vehicle position onto the line segment between closest and next point
@@ -380,7 +368,7 @@ int Controller::find_target_point(const nav_msgs::msg::Path& path,
     int start_index = std::max(0, closest_index);
     
     // Find the point along the path that corresponds to target_s
-    double cumulative_s = calculate_path_distance_at_index(path, start_index);
+    double cumulative_s = utils::calculate_path_distance_at_index(path, start_index);
     
     for (int i = start_index; i < static_cast<int>(path.poses.size()) - 1; ++i) {
         double dx = path.poses[i+1].pose.position.x - path.poses[i].pose.position.x;
@@ -553,39 +541,6 @@ double Controller::calculate_target_speed(double steering_angle, double lateral_
     return std::max(target_speed, config_.min_speed);
 }
 
-double Controller::normalize_angle(double angle) {
-    while (angle > M_PI) angle -= 2.0 * M_PI;
-    while (angle < -M_PI) angle += 2.0 * M_PI;
-    return angle;
-}
-
-double Controller::distance_to_path(const nav_msgs::msg::Path& path, 
-                                     const VehicleState& vehicle) {
-    if (path.poses.empty()) return 0.0;
-    
-    double min_distance = std::numeric_limits<double>::max();
-    
-    for (const auto& pose : path.poses) {
-        double dx = pose.pose.position.x - vehicle.x;
-        double dy = pose.pose.position.y - vehicle.y;
-        double distance = std::sqrt(dx*dx + dy*dy);
-        min_distance = std::min(min_distance, distance);
-    }
-    
-    return min_distance;
-}
-
-bool Controller::is_path_valid(const nav_msgs::msg::Path& path) {
-    if (path.poses.empty()) {
-        return false;
-    }
-    
-    if (path.poses.size() < 2) {
-        return false;  // Need at least 2 points
-    }
-    
-    return true;
-}
 
 double Controller::get_velocity_at_point(int target_index) const {
     if (!has_velocity_path_ || target_index < 0 || 
@@ -628,7 +583,7 @@ bool Controller::detect_upcoming_corner(const nav_msgs::msg::Path& path, const V
     int check_end = std::min(check_start + anticipation_points, static_cast<int>(path.poses.size()) - 1);
     
     // Calculate curvature in the upcoming path segment
-    double max_curvature = calculate_path_curvature(path, check_start, check_end - check_start);
+    double max_curvature = utils::calculate_path_curvature(path, check_start, check_end - check_start);
     
     // Also check current steering requirement
     // Predict required steering about the lookahead point
@@ -642,42 +597,6 @@ bool Controller::detect_upcoming_corner(const nav_msgs::msg::Path& path, const V
     return high_curvature || high_steering;
 }
 
-double Controller::calculate_path_curvature(const nav_msgs::msg::Path& path, int start_idx, int samples) {
-    if (start_idx + samples >= static_cast<int>(path.poses.size()) || samples < 3) {
-        return 0.0;
-    }
-    
-    double max_curvature = 0.0;
-    
-    for (int i = start_idx + 1; i < start_idx + samples - 1; ++i) {
-        // Get three consecutive points
-        double x1 = path.poses[i-1].pose.position.x;
-        double y1 = path.poses[i-1].pose.position.y;
-        double x2 = path.poses[i].pose.position.x;
-        double y2 = path.poses[i].pose.position.y;
-        double x3 = path.poses[i+1].pose.position.x;
-        double y3 = path.poses[i+1].pose.position.y;
-        
-        // Calculate curvature using the circumscribed circle method
-        double a = std::sqrt((x2-x1)*(x2-x1) + (y2-y1)*(y2-y1));
-        double b = std::sqrt((x3-x2)*(x3-x2) + (y3-y2)*(y3-y2));
-        double c = std::sqrt((x3-x1)*(x3-x1) + (y3-y1)*(y3-y1));
-        
-        if (a < 1e-6 || b < 1e-6 || c < 1e-6) continue;
-        
-        double s = (a + b + c) / 2.0;
-        double area = std::sqrt(s * (s-a) * (s-b) * (s-c));
-        
-        if (area < 1e-6) continue;
-        
-        double radius = (a * b * c) / (4.0 * area);
-        double curvature = 1.0 / radius;
-        
-        max_curvature = std::max(max_curvature, curvature);
-    }
-    
-    return max_curvature;
-}
 
 double Controller::predict_required_steering(const nav_msgs::msg::Path& path, const VehicleState& vehicle) {
     if (path.poses.size() < 2) {
@@ -693,7 +612,7 @@ double Controller::predict_required_steering(const nav_msgs::msg::Path& path, co
     
     // Find point at target s-coordinate
     double target_s = vehicle_s + lookahead_s;
-    double cumulative_s = calculate_path_distance_at_index(path, closest_index);
+    double cumulative_s = utils::calculate_path_distance_at_index(path, closest_index);
     
     for (int i = closest_index; i < static_cast<int>(path.poses.size()) - 1; ++i) {
         double dx = path.poses[i+1].pose.position.x - path.poses[i].pose.position.x;
@@ -815,7 +734,7 @@ std::pair<double, double> Controller::stanley_method_control() {
     double path_heading = calculate_path_heading_at_point(path, closest_index);
     
     // Calculate heading error
-    double heading_error = normalize_angle(path_heading - vehicle.yaw);
+    double heading_error = utils::normalize_angle(path_heading - vehicle.yaw);
     
     // Stanley controller parameters from configuration
     double k_e = config_.stanley_k_e;        // Cross-track error gain
@@ -981,7 +900,7 @@ int Controller::find_target_point_for_velocity(const nav_msgs::msg::Path& path,
     double target_s = vehicle_s + lookahead_s;
     
     // Find the point that corresponds to target_s
-    double cumulative_s = calculate_path_distance_at_index(path, closest_index);
+    double cumulative_s = utils::calculate_path_distance_at_index(path, closest_index);
     
     for (int i = closest_index; i < static_cast<int>(path.poses.size()) - 1; ++i) {
         double dx = path.poses[i+1].pose.position.x - path.poses[i].pose.position.x;
@@ -999,4 +918,32 @@ int Controller::find_target_point_for_velocity(const nav_msgs::msg::Path& path,
     return static_cast<int>(path.poses.size()) - 1;
 }
 
-} // namespace path_follower_pkg
+} // namespace controller_pkg
+
+// Global pointer to the node for signal handler
+std::shared_ptr<controller_pkg::Controller> g_node = nullptr;
+
+void signalHandler(int /* signum */) {
+    if (g_node) {
+        g_node->shutdown_handler();
+    }
+    rclcpp::shutdown();
+}
+
+int main(int argc, char** argv) {
+    rclcpp::init(argc, argv);
+    
+    auto node = std::make_shared<controller_pkg::Controller>();
+    g_node = node;  // Set global pointer for signal handler
+    
+    // Register signal handlers
+    std::signal(SIGINT, signalHandler);   // Ctrl+C
+    std::signal(SIGTERM, signalHandler);  // Termination signal
+    
+    RCLCPP_INFO(node->get_logger(), "Starting Controller Node with graceful shutdown");
+    
+    rclcpp::spin(node);
+    
+    rclcpp::shutdown();
+    return 0;
+}
