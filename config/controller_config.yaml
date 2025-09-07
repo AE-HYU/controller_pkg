@@ -1,43 +1,22 @@
-# Path Follower Configuration
+# Controller Configuration
 
-path_follower:
+controller:
   ros__parameters:
-    # Pure Pursuit parameters
+    # Basic Pure Pursuit parameters
     lookahead_distance: 2.5       # Base lookahead distance (m)
-    min_lookahead: 0.3           # Minimum lookahead distance (m) - slightly increased
+    min_lookahead: 0.5           # Minimum lookahead distance (m)
     max_lookahead: 3.0           # Maximum lookahead distance (m)
     lookahead_ratio: 0.4         # Dynamic lookahead: distance = velocity * ratio
     
     # Vehicle parameters
-    wheelbase: 0.35              # Vehicle wheelbase (m) - matches lattice planner
-    max_steering_angle: 0.4      # Maximum steering angle (radians, ~23 degrees)
+    wheelbase: 0.35              # Vehicle wheelbase (m)
+    max_steering_angle: 0.4      # Maximum steering angle (radians)
     
-    # Speed control
-    target_speed: 1.0            # Fallback target speed (m/s) when no planner velocity - REDUCED
-    max_speed: 8.0               # Maximum speed (m/s) - INCREASED
-    min_speed: 0.5              # Minimum speed (m/s) - REDUCED
-    speed_lookahead_gain: 0.5    # Speed adjustment gain
+    # Basic speed control
+    target_speed: 5.0            # Default target speed (m/s)
+    max_speed: 8.0               # Maximum speed (m/s)
+    min_speed: 1.0              # Minimum speed (m/s)
     
     # Planner velocity integration
-    use_planner_velocity: true   # Use velocity from planner (PathWithVelocity)
-    velocity_scale_factor: 0.1   # Scale factor for planner velocity (10% of planned velocity)
-    velocity_smoothing: 0.3      # Smoothing factor for velocity changes
-    
-    # Corner handling
-    corner_detection_angle: 0.25    # Corner detection threshold (radians) (in degrees: ~17 degrees)
-    corner_speed_factor: 1.3       # Speed reduction factor in corners
-    anticipation_distance: 1.5     # Look-ahead distance for corner detection (m)
-    
-    # Controller Selection
-    use_stanley: false             # Controller type: true = Stanley controller, false = Pure Pursuit controller
-    
-    # Stanley controller parameters
-    stanley_k_e: 1.55             # Cross-track error gain for Stanley controller (reduced for less oscillation)
-    stanley_k_soft: 1.0          # Softening constant to prevent division by zero (reduced for more responsive steering)
-    stanley_heading_gain: 0.9    # Heading error gain (less than 1.0 for stability)
-    stanley_max_cross_track: 0.2 # Maximum cross-track correction (rad) to prevent overshoot
-    stanley_steering_smoothing: 0.1 # Steering smoothing factor (reduced for more responsive steering)
-    
-    # Safety parameters
-    max_lateral_error: 2.0       # Maximum lateral error before speed reduction
-    emergency_brake_distance: 0.5 # Emergency braking distance
+    use_planner_velocity: true   # Use velocity from planner
+    velocity_scale_factor: 1.0   # Scale factor for planner velocity (1.0 = follow planner exactly)
