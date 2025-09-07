@@ -56,7 +56,7 @@ private:
     // Pure Pursuit Controller
     std::pair<double, double> pure_pursuit_control();
     int find_target_point(const nav_msgs::msg::Path& path, const VehicleState& vehicle);
-    double calculate_lookahead_distance(double velocity);
+    double calculate_lookahead_distance(double velocity, double curvature = 0.0);
     double calculate_steering_angle(double target_x, double target_y, const VehicleState& vehicle);
     double get_target_speed(int target_index);
     double get_velocity_at_point(int target_index) const;

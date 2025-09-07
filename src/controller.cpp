@@ -41,6 +41,7 @@ bool Controller::initialize() {
     this->declare_parameter("min_speed", config_.min_speed);
     this->declare_parameter("use_planner_velocity", config_.use_planner_velocity);
     this->declare_parameter("velocity_scale_factor", config_.velocity_scale_factor);
+    this->declare_parameter("curvature_sensitivity", config_.curvature_sensitivity);
 
     // Get parameters
     config_.lookahead_distance = this->get_parameter("lookahead_distance").as_double();
@@ -54,6 +55,7 @@ bool Controller::initialize() {
     config_.min_speed = this->get_parameter("min_speed").as_double();
     config_.use_planner_velocity = this->get_parameter("use_planner_velocity").as_bool();
     config_.velocity_scale_factor = this->get_parameter("velocity_scale_factor").as_double();
+    config_.curvature_sensitivity = this->get_parameter("curvature_sensitivity").as_double();
 
     RCLCPP_INFO(this->get_logger(), "Pure Pursuit Controller initialized");
 
@@ -203,31 +205,29 @@ std::pair<double, double> Controller::pure_pursuit_control() {
         return std::make_pair(0.0, 0.0);
     }
     
-    // Find target point using basic lookahead
     int target_index = find_target_point(path, vehicle);
     if (target_index < 0 || target_index >= static_cast<int>(path.poses.size())) {
         RCLCPP_WARN(this->get_logger(), "No valid target point found");
         return std::make_pair(0.0, 0.0);
     }
-    
     // Get target point coordinates
     double target_x = path.poses[target_index].pose.position.x;
     double target_y = path.poses[target_index].pose.position.y;
-    
+    // Extract curvature information (only if velocity path is available)
+    double curvature = 0.0;
+    if (has_velocity_path_ && target_index >= 0 && target_index < static_cast<int>(current_velocity_path_.points.size())) {
+        curvature = current_velocity_path_.points[target_index].curvature;
+    }
     // Calculate steering angle
     double steering_angle = calculate_steering_angle(target_x, target_y, vehicle);
-    
     // Get velocity from planner
     double speed = get_target_speed(target_index);
-    
-    RCLCPP_DEBUG(this->get_logger(), "Control: target=%d, steering=%.2f°, speed=%.1f", 
-                 target_index, steering_angle*180/M_PI, speed);
-    
+    RCLCPP_DEBUG(this->get_logger(), "Control: target=%d, steering=%.2f°, speed=%.1f, curvature=%.3f", 
+                 target_index, steering_angle*180/M_PI, speed, curvature);
     // Clamp values
     steering_angle = std::clamp(steering_angle, -config_.max_steering_angle, 
                                config_.max_steering_angle);
     speed = std::clamp(speed, config_.min_speed, config_.max_speed);
-    
     return std::make_pair(steering_angle, speed);
 }
 
@@ -287,7 +287,10 @@ int Controller::find_target_point(const nav_msgs::msg::Path& path,
                                    const VehicleState& vehicle) {
     if (path.poses.empty()) return -1;
     
-    double lookahead = calculate_lookahead_distance(vehicle.velocity);
+    // To use the curvature of the target point, target_index should be found first and then lookahead calculated.
+    // The previous approach calculated lookahead first, but now it is curvature-based.
+    // For now, keep the previous approach; curvature will be passed from pure_pursuit_control.
+    double lookahead = calculate_lookahead_distance(vehicle.velocity, 0.0); // Curvature will be passed from pure_pursuit_control
     
     // Get vehicle's position along the path (Frenet s-coordinate)
     auto [closest_index, vehicle_s] = find_vehicle_position_on_path(path, vehicle);
@@ -322,9 +325,13 @@ int Controller::find_target_point(const nav_msgs::msg::Path& path,
 }
 
 /////////////////////////////////////////////////////////////
-double Controller::calculate_lookahead_distance(double velocity) {
-    double dynamic_lookahead = velocity * config_.lookahead_ratio;
-    return std::clamp(dynamic_lookahead, config_.min_lookahead, config_.max_lookahead);
+double Controller::calculate_lookahead_distance(double velocity, double curvature) {
+    double base_lookahead = velocity * config_.lookahead_ratio;
+    // Reduce lookahead distance as curvature increases (K: tuning parameter)
+    double K = 2.0; // Curvature sensitivity, can be parameterized if needed
+    double curvature_factor = std::max(1.0, std::abs(curvature) * K);
+    double lookahead = base_lookahead / curvature_factor;
+    return std::clamp(lookahead, config_.min_lookahead, config_.max_lookahead);
 }
 
 double Controller::calculate_steering_angle(double target_x, double target_y, 
