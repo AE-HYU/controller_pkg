@@ -93,35 +93,15 @@ void Controller::path_with_velocity_callback(const planning_custom_msgs::msg::Pa
     
     std::lock_guard<std::mutex> lock(path_mutex_);
     
-    // Store the velocity path
+    // Store the velocity path (no conversion needed!)
     current_velocity_path_ = *msg;
     has_velocity_path_ = true;
-    
-    // Convert PathWithVelocity to nav_msgs::Path for compatibility with existing algorithms
-    current_path_.header = msg->header;
-    current_path_.poses.clear();
-    current_path_.poses.reserve(msg->points.size());
-    
-    for (const auto& point : msg->points) {
-        geometry_msgs::msg::PoseStamped pose_stamped;
-        pose_stamped.header = msg->header;
-        pose_stamped.pose.position.x = point.x;
-        pose_stamped.pose.position.y = point.y;
-        pose_stamped.pose.position.z = 0.0;
-        
-        // Convert yaw to quaternion
-        tf2::Quaternion q;
-        q.setRPY(0, 0, point.yaw);
-        pose_stamped.pose.orientation = tf2::toMsg(q);
-        
-        current_path_.poses.push_back(pose_stamped);
-    }
     
     path_received_ = true;
     last_path_time_ = this->get_clock()->now();
     last_target_index_ = 0;  // Reset target index for new path
     
-    RCLCPP_INFO(this->get_logger(), "Received and converted velocity path with %zu points", 
+    RCLCPP_INFO(this->get_logger(), "Received velocity path with %zu points", 
                  current_velocity_path_.points.size());
 }
 
@@ -191,50 +171,52 @@ void Controller::control_timer_callback() {
 }
 
 std::pair<double, double> Controller::pure_pursuit_control() {
-    nav_msgs::msg::Path path;
+    planning_custom_msgs::msg::PathWithVelocity path;
     VehicleState vehicle;
     
     {
         std::lock_guard<std::mutex> path_lock(path_mutex_);
         std::lock_guard<std::mutex> state_lock(state_mutex_);
-        path = current_path_;
+        path = current_velocity_path_;
         vehicle = vehicle_state_;
     }
     
-    if (path.poses.empty()) {
+    if (path.points.empty()) {
         return std::make_pair(0.0, 0.0);
     }
     
     int target_index = find_target_point(path, vehicle);
-    if (target_index < 0 || target_index >= static_cast<int>(path.poses.size())) {
+    if (target_index < 0 || target_index >= static_cast<int>(path.points.size())) {
         RCLCPP_WARN(this->get_logger(), "No valid target point found");
         return std::make_pair(0.0, 0.0);
     }
-    // Get target point coordinates
-    double target_x = path.poses[target_index].pose.position.x;
-    double target_y = path.poses[target_index].pose.position.y;
-    // Extract curvature information (only if velocity path is available)
-    double curvature = 0.0;
-    if (has_velocity_path_ && target_index >= 0 && target_index < static_cast<int>(current_velocity_path_.points.size())) {
-        curvature = current_velocity_path_.points[target_index].curvature;
-    }
+    
+    // Get target point coordinates directly from PathWithVelocity
+    double target_x = path.points[target_index].x;
+    double target_y = path.points[target_index].y;
+    double curvature = path.points[target_index].curvature;
+    
     // Calculate steering angle
     double steering_angle = calculate_steering_angle(target_x, target_y, vehicle);
+    
     // Get velocity from planner
     double speed = get_target_speed(target_index);
+    
     RCLCPP_DEBUG(this->get_logger(), "Control: target=%d, steering=%.2f°, speed=%.1f, curvature=%.3f", 
                  target_index, steering_angle*180/M_PI, speed, curvature);
+    
     // Clamp values
     steering_angle = std::clamp(steering_angle, -config_.max_steering_angle, 
                                config_.max_steering_angle);
     speed = std::clamp(speed, config_.min_speed, config_.max_speed);
+    
     return std::make_pair(steering_angle, speed);
 }
 
 
-std::pair<int, double> Controller::find_vehicle_position_on_path(const nav_msgs::msg::Path& path, 
+std::pair<int, double> Controller::find_vehicle_position_on_path(const planning_custom_msgs::msg::PathWithVelocity& path, 
                                                                   const VehicleState& vehicle) {
-    if (path.poses.empty()) {
+    if (path.points.empty()) {
         return std::make_pair(-1, 0.0);
     }
     
@@ -242,9 +224,9 @@ std::pair<int, double> Controller::find_vehicle_position_on_path(const nav_msgs:
     double min_distance = std::numeric_limits<double>::max();
     int closest_index = 0;
     
-    for (int i = 0; i < static_cast<int>(path.poses.size()); ++i) {
-        double dx = path.poses[i].pose.position.x - vehicle.x;
-        double dy = path.poses[i].pose.position.y - vehicle.y;
+    for (int i = 0; i < static_cast<int>(path.points.size()); ++i) {
+        double dx = path.points[i].x - vehicle.x;
+        double dy = path.points[i].y - vehicle.y;
         double distance = std::sqrt(dx*dx + dy*dy);
         
         if (distance < min_distance) {
@@ -253,15 +235,22 @@ std::pair<int, double> Controller::find_vehicle_position_on_path(const nav_msgs:
         }
     }
     
-    // Calculate vehicle's s-coordinate by projecting onto the path segment
-    double vehicle_s = utils::calculate_path_distance_at_index(path, closest_index);
+    // Calculate vehicle's s-coordinate by accumulating distances
+    double vehicle_s = 0.0;
+    for (int i = 0; i < closest_index; ++i) {
+        if (i < static_cast<int>(path.points.size()) - 1) {
+            double dx = path.points[i + 1].x - path.points[i].x;
+            double dy = path.points[i + 1].y - path.points[i].y;
+            vehicle_s += std::sqrt(dx * dx + dy * dy);
+        }
+    }
     
-    if (closest_index < static_cast<int>(path.poses.size()) - 1) {
+    if (closest_index < static_cast<int>(path.points.size()) - 1) {
         // Project vehicle position onto the line segment between closest and next point
-        double x1 = path.poses[closest_index].pose.position.x;
-        double y1 = path.poses[closest_index].pose.position.y;
-        double x2 = path.poses[closest_index + 1].pose.position.x;
-        double y2 = path.poses[closest_index + 1].pose.position.y;
+        double x1 = path.points[closest_index].x;
+        double y1 = path.points[closest_index].y;
+        double x2 = path.points[closest_index + 1].x;
+        double y2 = path.points[closest_index + 1].y;
         
         double path_dx = x2 - x1;
         double path_dy = y2 - y1;
@@ -283,9 +272,9 @@ std::pair<int, double> Controller::find_vehicle_position_on_path(const nav_msgs:
     return std::make_pair(closest_index, vehicle_s);
 }
 
-int Controller::find_target_point(const nav_msgs::msg::Path& path, 
+int Controller::find_target_point(const planning_custom_msgs::msg::PathWithVelocity& path, 
                                    const VehicleState& vehicle) {
-    if (path.poses.empty()) return -1;
+    if (path.points.empty()) return -1;
     
     // Get vehicle's position along the path (Frenet s-coordinate)
     auto [closest_index, vehicle_s] = find_vehicle_position_on_path(path, vehicle);
@@ -309,8 +298,8 @@ int Controller::find_target_point(const nav_msgs::msg::Path& path,
     int final_target = find_point_at_distance(path, closest_index, target_s);
     
     // Safety check: ensure we don't go beyond available curvature data
-    if (has_velocity_path_ && final_target >= static_cast<int>(current_velocity_path_.points.size())) {
-        final_target = std::min(final_target, static_cast<int>(current_velocity_path_.points.size()) - 1);
+    if (final_target >= static_cast<int>(path.points.size())) {
+        final_target = static_cast<int>(path.points.size()) - 1;
     }
     
     last_target_index_ = final_target;
@@ -404,8 +393,8 @@ void Controller::shutdown_handler() {
 
 /////////////////////////////////////////////////////////////
 // Helper function implementations
-int Controller::find_point_at_distance(const nav_msgs::msg::Path& path, int start_index, double target_s) {
-    if (path.poses.empty() || start_index >= static_cast<int>(path.poses.size())) {
+int Controller::find_point_at_distance(const planning_custom_msgs::msg::PathWithVelocity& path, int start_index, double target_s) {
+    if (path.points.empty() || start_index >= static_cast<int>(path.points.size())) {
         return start_index;
     }
     
@@ -413,9 +402,9 @@ int Controller::find_point_at_distance(const nav_msgs::msg::Path& path, int star
     int target_index = start_index;
     
     // Accumulate distance from start_index
-    for (int i = start_index; i < static_cast<int>(path.poses.size()) - 1; ++i) {
-        double dx = path.poses[i + 1].pose.position.x - path.poses[i].pose.position.x;
-        double dy = path.poses[i + 1].pose.position.y - path.poses[i].pose.position.y;
+    for (int i = start_index; i < static_cast<int>(path.points.size()) - 1; ++i) {
+        double dx = path.points[i + 1].x - path.points[i].x;
+        double dy = path.points[i + 1].y - path.points[i].y;
         accumulated_distance += std::sqrt(dx * dx + dy * dy);
         
         if (accumulated_distance >= target_s) {
@@ -425,7 +414,7 @@ int Controller::find_point_at_distance(const nav_msgs::msg::Path& path, int star
         target_index = i + 1;
     }
     
-    return std::min(target_index, static_cast<int>(path.poses.size()) - 1);
+    return std::min(target_index, static_cast<int>(path.points.size()) - 1);
 }
 
 double Controller::get_curvature_at_index(int index) {

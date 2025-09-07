@@ -58,7 +58,7 @@ private:
     
     // Pure Pursuit Controller
     std::pair<double, double> pure_pursuit_control();
-    int find_target_point(const nav_msgs::msg::Path& path, const VehicleState& vehicle);
+    int find_target_point(const planning_custom_msgs::msg::PathWithVelocity& path, const VehicleState& vehicle);
     double calculate_lookahead_distance(double velocity, double curvature = 0.0);
     double calculate_steering_angle(double target_x, double target_y, const VehicleState& vehicle);
     double get_target_speed(int target_index);
@@ -68,9 +68,9 @@ private:
     void publish_stop_command();
     
     // Helper functions
-    std::pair<int, double> find_vehicle_position_on_path(const nav_msgs::msg::Path& path, 
+    std::pair<int, double> find_vehicle_position_on_path(const planning_custom_msgs::msg::PathWithVelocity& path, 
                                                         const VehicleState& vehicle);
-    int find_point_at_distance(const nav_msgs::msg::Path& path, int start_index, double target_s);
+    int find_point_at_distance(const planning_custom_msgs::msg::PathWithVelocity& path, int start_index, double target_s);
     double get_curvature_at_index(int index);
     
     // Subscriptions and Publishers
@@ -80,7 +80,6 @@ private:
     rclcpp::TimerBase::SharedPtr control_timer_;
     
     // State variables
-    nav_msgs::msg::Path current_path_;
     planning_custom_msgs::msg::PathWithVelocity current_velocity_path_;
     VehicleState vehicle_state_;
     ControllerConfig config_;
