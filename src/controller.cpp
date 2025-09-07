@@ -784,9 +784,11 @@ std::pair<double, double> Controller::stanley_method_control() {
     int target_index = find_target_point_for_velocity(path, vehicle);
     double planner_velocity = get_velocity_at_point(target_index);
     
+    // Corner detection
+    bool in_corner = detect_upcoming_corner(path, vehicle);
+    
     // Calculate target speed
-    // double speed = calculate_target_speed(steering_angle, lateral_error, in_corner, planner_velocity);
-    double speed = planner_velocity;
+    double speed = calculate_target_speed(steering_angle, lateral_error, in_corner, planner_velocity);
     
     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
                  "Stanley: heading_err=%.3f, cross_track_err=%.3f, cross_track_term=%.3f, total=%.3f",
