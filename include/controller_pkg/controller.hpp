@@ -35,6 +35,9 @@ struct ControllerConfig {
     // Planner velocity integration
     bool use_planner_velocity = true;
     double velocity_scale_factor = 1.0;
+    
+    // Curvature-based lookahead adjustment
+    double curvature_sensitivity = 2.0;
 };
 
 class Controller : public rclcpp::Node {
@@ -67,6 +70,8 @@ private:
     // Helper functions
     std::pair<int, double> find_vehicle_position_on_path(const nav_msgs::msg::Path& path, 
                                                         const VehicleState& vehicle);
+    int find_point_at_distance(const nav_msgs::msg::Path& path, int start_index, double target_s);
+    double get_curvature_at_index(int index);
     
     // Subscriptions and Publishers
     rclcpp::Subscription<planning_custom_msgs::msg::PathWithVelocity>::SharedPtr path_with_velocity_sub_;

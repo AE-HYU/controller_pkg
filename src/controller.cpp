@@ -287,49 +287,41 @@ int Controller::find_target_point(const nav_msgs::msg::Path& path,
                                    const VehicleState& vehicle) {
     if (path.poses.empty()) return -1;
     
-    // To use the curvature of the target point, target_index should be found first and then lookahead calculated.
-    // The previous approach calculated lookahead first, but now it is curvature-based.
-    // For now, keep the previous approach; curvature will be passed from pure_pursuit_control.
-    double lookahead = calculate_lookahead_distance(vehicle.velocity, 0.0); // Curvature will be passed from pure_pursuit_control
-    
     // Get vehicle's position along the path (Frenet s-coordinate)
     auto [closest_index, vehicle_s] = find_vehicle_position_on_path(path, vehicle);
     if (closest_index < 0) return -1;
     
-    // Target s-coordinate is vehicle's s + lookahead distance
-    double target_s = vehicle_s + lookahead;
+    // Use iterative approach to find target point considering curvature
+    // Start with base lookahead and refine based on curvature
+    double base_lookahead = vehicle.velocity * config_.lookahead_ratio;
+    base_lookahead = std::clamp(base_lookahead, config_.min_lookahead, config_.max_lookahead);
     
-    // Start search from closest index to avoid going backwards
-    int start_index = std::max(0, closest_index);
+    // Find initial target point with base lookahead
+    double target_s = vehicle_s + base_lookahead;
+    int initial_target = find_point_at_distance(path, closest_index, target_s);
     
-    // Find the point along the path that corresponds to target_s
-    double cumulative_s = utils::calculate_path_distance_at_index(path, start_index);
+    // Get curvature at initial target point and adjust lookahead
+    double curvature = get_curvature_at_index(initial_target);
+    double adjusted_lookahead = calculate_lookahead_distance(vehicle.velocity, curvature);
     
-    for (int i = start_index; i < static_cast<int>(path.poses.size()) - 1; ++i) {
-        double dx = path.poses[i+1].pose.position.x - path.poses[i].pose.position.x;
-        double dy = path.poses[i+1].pose.position.y - path.poses[i].pose.position.y;
-        double segment_length = std::sqrt(dx*dx + dy*dy);
-        
-        if (cumulative_s + segment_length >= target_s) {
-            // Found the segment containing our target s-coordinate
-            last_target_index_ = i + 1;
-            return i + 1;
-        }
-        
-        cumulative_s += segment_length;
+    // Find final target point with adjusted lookahead
+    target_s = vehicle_s + adjusted_lookahead;
+    int final_target = find_point_at_distance(path, closest_index, target_s);
+    
+    // Safety check: ensure we don't go beyond available curvature data
+    if (has_velocity_path_ && final_target >= static_cast<int>(current_velocity_path_.points.size())) {
+        final_target = std::min(final_target, static_cast<int>(current_velocity_path_.points.size()) - 1);
     }
     
-    // If target_s is beyond the path, return the last point
-    last_target_index_ = static_cast<int>(path.poses.size()) - 1;
-    return last_target_index_;
+    last_target_index_ = final_target;
+    return final_target;
 }
 
 /////////////////////////////////////////////////////////////
 double Controller::calculate_lookahead_distance(double velocity, double curvature) {
     double base_lookahead = velocity * config_.lookahead_ratio;
-    // Reduce lookahead distance as curvature increases (K: tuning parameter)
-    double K = 2.0; // Curvature sensitivity, can be parameterized if needed
-    double curvature_factor = std::max(1.0, std::abs(curvature) * K);
+    // Reduce lookahead distance as curvature increases (using configurable sensitivity)
+    double curvature_factor = std::max(1.0, std::abs(curvature) * config_.curvature_sensitivity);
     double lookahead = base_lookahead / curvature_factor;
     return std::clamp(lookahead, config_.min_lookahead, config_.max_lookahead);
 }
@@ -410,6 +402,46 @@ void Controller::shutdown_handler() {
     }
 }
 
+/////////////////////////////////////////////////////////////
+// Helper function implementations
+int Controller::find_point_at_distance(const nav_msgs::msg::Path& path, int start_index, double target_s) {
+    if (path.poses.empty() || start_index >= static_cast<int>(path.poses.size())) {
+        return start_index;
+    }
+    
+    double accumulated_distance = 0.0;
+    int target_index = start_index;
+    
+    // Accumulate distance from start_index
+    for (int i = start_index; i < static_cast<int>(path.poses.size()) - 1; ++i) {
+        double dx = path.poses[i + 1].pose.position.x - path.poses[i].pose.position.x;
+        double dy = path.poses[i + 1].pose.position.y - path.poses[i].pose.position.y;
+        accumulated_distance += std::sqrt(dx * dx + dy * dy);
+        
+        if (accumulated_distance >= target_s) {
+            target_index = i + 1;
+            break;
+        }
+        target_index = i + 1;
+    }
+    
+    return std::min(target_index, static_cast<int>(path.poses.size()) - 1);
+}
+
+double Controller::get_curvature_at_index(int index) {
+    if (!has_velocity_path_ || current_velocity_path_.points.empty()) {
+        return 0.0;  // Default to no curvature if no velocity path available
+    }
+    
+    // Clamp index to valid range
+    int valid_index = std::max(0, std::min(index, static_cast<int>(current_velocity_path_.points.size()) - 1));
+    
+    if (valid_index >= static_cast<int>(current_velocity_path_.points.size())) {
+        return 0.0;
+    }
+    
+    return current_velocity_path_.points[valid_index].curvature;
+}
 
 } // namespace controller_pkg
 

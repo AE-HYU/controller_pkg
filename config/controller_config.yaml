@@ -20,3 +20,6 @@ controller:
     # Planner velocity integration
     use_planner_velocity: true   # Use velocity from planner
     velocity_scale_factor: 1.0   # Scale factor for planner velocity (1.0 = follow planner exactly)
+    
+    # Curvature-based lookahead adjustment
+    curvature_sensitivity: 5.0   # How sensitive lookahead is to path curvature (higher = more sensitive)
