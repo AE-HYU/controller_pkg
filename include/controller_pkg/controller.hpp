@@ -95,6 +95,7 @@ private:
     bool detect_upcoming_corner(const nav_msgs::msg::Path& path, const VehicleState& vehicle);
     double predict_required_steering(const nav_msgs::msg::Path& path, const VehicleState& vehicle);
     double get_velocity_at_point(int target_index) const;
+    double get_max_curvature_in_range(int start_idx, int end_idx) const;
     
     // Safety functions
     void publish_stop_command();

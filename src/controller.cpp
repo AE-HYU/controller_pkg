@@ -582,8 +582,23 @@ bool Controller::detect_upcoming_corner(const nav_msgs::msg::Path& path, const V
     int check_start = std::min(closest_idx, static_cast<int>(path.poses.size()) - 5);
     int check_end = std::min(check_start + anticipation_points, static_cast<int>(path.poses.size()) - 1);
     
-    // Calculate curvature in the upcoming path segment
-    double max_curvature = utils::calculate_path_curvature(path, check_start, check_end - check_start);
+    // Use planner-provided curvature data (more accurate than recalculating)
+    double max_curvature = 0.0;
+    if (has_velocity_path_) {
+        int velocity_check_start = std::max(0, std::min(check_start, static_cast<int>(current_velocity_path_.points.size()) - 1));
+        int velocity_check_end = std::max(0, std::min(check_end, static_cast<int>(current_velocity_path_.points.size()) - 1));
+        
+        for (int i = velocity_check_start; i <= velocity_check_end; ++i) {
+            if (i < static_cast<int>(current_velocity_path_.points.size())) {
+                max_curvature = std::max(max_curvature, std::abs(current_velocity_path_.points[i].curvature));
+            }
+        }
+    } else {
+        // Fallback: use simple approximation if planner data is not available
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000, 
+                             "Planner velocity path not available, using fallback curvature detection");
+        max_curvature = 0.1;  // Conservative estimate for corner detection
+    }
     
     // Also check current steering requirement
     // Predict required steering about the lookahead point
