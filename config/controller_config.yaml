@@ -3,14 +3,15 @@
 controller:
   ros__parameters:
     # Basic Pure Pursuit parameters
-    lookahead_distance: 2.5       # Base lookahead distance (m)
-    min_lookahead: 0.5           # Minimum lookahead distance (m)
-    max_lookahead: 3.0           # Maximum lookahead distance (m)
+    lookahead_distance: 3.0       # Base lookahead distance (m) - increased for stability
+    min_lookahead: 1.0           # Minimum lookahead distance (m) - increased to reduce oscillation
+    max_lookahead: 4.0           # Maximum lookahead distance (m)
     lookahead_ratio: 0.4         # Dynamic lookahead: distance = velocity * ratio
     
     # Vehicle parameters
     wheelbase: 0.35              # Vehicle wheelbase (m)
     max_steering_angle: 0.4      # Maximum steering angle (radians)
+    max_steering_rate: 2.0       # Maximum steering rate (rad/s) - limit rapid changes
     
     # Basic speed control
     target_speed: 5.0            # Default target speed (m/s)
@@ -19,7 +20,7 @@ controller:
     
     # Planner velocity integration
     use_planner_velocity: true   # Use velocity from planner
-    velocity_scale_factor: 1.0   # Scale factor for planner velocity (1.0 = follow planner exactly)
+    velocity_scale_factor: 1.0   # Scale factor for planner velocity (slightly conservative)
     
     # Curvature-based lookahead adjustment
-    curvature_sensitivity: 5.0   # How sensitive lookahead is to path curvature (higher = more sensitive)
+    curvature_sensitivity: 2.0   # Reduced sensitivity to prevent excessive lookahead changes

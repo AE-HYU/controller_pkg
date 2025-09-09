@@ -4,7 +4,7 @@
 #include <nav_msgs/msg/path.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <ackermann_msgs/msg/ackermann_drive_stamped.hpp>
-#include <planning_custom_msgs/msg/path_with_velocity.hpp>
+#include <crazy_planner_msgs/msg/waypoint_array.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
@@ -26,6 +26,7 @@ struct ControllerConfig {
     // Vehicle parameters
     double wheelbase = 0.35;
     double max_steering_angle = 0.4;
+    double max_steering_rate = 2.0;
     
     // Speed control
     double target_speed = 5.0;
@@ -52,13 +53,13 @@ private:
     bool initialize();
     
     // Callbacks
-    void path_with_velocity_callback(const planning_custom_msgs::msg::PathWithVelocity::SharedPtr msg);
+    void waypoint_array_callback(const crazy_planner_msgs::msg::WaypointArray::SharedPtr msg);
     void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
     void control_timer_callback();
     
     // Pure Pursuit Controller
     std::pair<double, double> pure_pursuit_control();
-    int find_target_point(const planning_custom_msgs::msg::PathWithVelocity& path, const VehicleState& vehicle);
+    int find_target_point(const crazy_planner_msgs::msg::WaypointArray& waypoints, const VehicleState& vehicle);
     double calculate_lookahead_distance(double velocity, double curvature = 0.0);
     double calculate_steering_angle(double target_x, double target_y, const VehicleState& vehicle);
     double get_target_speed(int target_index);
@@ -68,19 +69,19 @@ private:
     void publish_stop_command();
     
     // Helper functions
-    std::pair<int, double> find_vehicle_position_on_path(const planning_custom_msgs::msg::PathWithVelocity& path, 
+    std::pair<int, double> find_vehicle_position_on_path(const crazy_planner_msgs::msg::WaypointArray& waypoints, 
                                                         const VehicleState& vehicle);
-    int find_point_at_distance(const planning_custom_msgs::msg::PathWithVelocity& path, int start_index, double target_s);
+    int find_point_at_distance(const crazy_planner_msgs::msg::WaypointArray& waypoints, int start_index, double target_s);
     double get_curvature_at_index(int index);
     
     // Subscriptions and Publishers
-    rclcpp::Subscription<planning_custom_msgs::msg::PathWithVelocity>::SharedPtr path_with_velocity_sub_;
+    rclcpp::Subscription<crazy_planner_msgs::msg::WaypointArray>::SharedPtr waypoint_array_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
     rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
     rclcpp::TimerBase::SharedPtr control_timer_;
     
     // State variables
-    planning_custom_msgs::msg::PathWithVelocity current_velocity_path_;
+    crazy_planner_msgs::msg::WaypointArray current_waypoints_;
     VehicleState vehicle_state_;
     ControllerConfig config_;
     
@@ -90,6 +91,8 @@ private:
     
     // Control variables
     rclcpp::Time last_path_time_;
+    rclcpp::Time last_control_time_;
+    double last_steering_angle_;
     bool path_received_;
     bool emergency_stop_;
     bool has_velocity_path_;

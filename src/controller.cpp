@@ -42,6 +42,7 @@ bool Controller::initialize() {
     this->declare_parameter("use_planner_velocity", config_.use_planner_velocity);
     this->declare_parameter("velocity_scale_factor", config_.velocity_scale_factor);
     this->declare_parameter("curvature_sensitivity", config_.curvature_sensitivity);
+    this->declare_parameter("max_steering_rate", config_.max_steering_rate);
 
     // Get parameters
     config_.lookahead_distance = this->get_parameter("lookahead_distance").as_double();
@@ -56,6 +57,7 @@ bool Controller::initialize() {
     config_.use_planner_velocity = this->get_parameter("use_planner_velocity").as_bool();
     config_.velocity_scale_factor = this->get_parameter("velocity_scale_factor").as_double();
     config_.curvature_sensitivity = this->get_parameter("curvature_sensitivity").as_double();
+    config_.max_steering_rate = this->get_parameter("max_steering_rate").as_double();
 
     RCLCPP_INFO(this->get_logger(), "Pure Pursuit Controller initialized");
 
@@ -64,10 +66,10 @@ bool Controller::initialize() {
         "/drive", 10);
 
     
-    // Initialize subscribers (only path_with_velocity and odom)
-    path_with_velocity_sub_ = this->create_subscription<planning_custom_msgs::msg::PathWithVelocity>(
-        "/planned_path_with_velocity", 10,
-        std::bind(&Controller::path_with_velocity_callback, this, std::placeholders::_1));
+    // Initialize subscribers (only waypoint_array and odom)
+    waypoint_array_sub_ = this->create_subscription<crazy_planner_msgs::msg::WaypointArray>(
+        "/planned_waypoints", 10,
+        std::bind(&Controller::waypoint_array_callback, this, std::placeholders::_1));
         
     odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
         "/odom", 10,
@@ -79,30 +81,32 @@ bool Controller::initialize() {
         timer_period, std::bind(&Controller::control_timer_callback, this));
     
     last_path_time_ = this->get_clock()->now();
+    last_control_time_ = this->get_clock()->now();
+    last_steering_angle_ = 0.0;
     
-    RCLCPP_INFO(this->get_logger(), "Controller subscribed to /planned_path_with_velocity topic");
+    RCLCPP_INFO(this->get_logger(), "Controller subscribed to /planned_waypoints topic");
     
     return true;
 }
 
-void Controller::path_with_velocity_callback(const planning_custom_msgs::msg::PathWithVelocity::SharedPtr msg) {
-    if (msg->points.empty()) {
-        RCLCPP_WARN(this->get_logger(), "Received empty velocity path");
+void Controller::waypoint_array_callback(const crazy_planner_msgs::msg::WaypointArray::SharedPtr msg) {
+    if (msg->waypoints.empty()) {
+        RCLCPP_WARN(this->get_logger(), "Received empty waypoint array");
         return;
     }
     
     std::lock_guard<std::mutex> lock(path_mutex_);
     
-    // Store the velocity path (no conversion needed!)
-    current_velocity_path_ = *msg;
+    // Store the waypoint array
+    current_waypoints_ = *msg;
     has_velocity_path_ = true;
     
     path_received_ = true;
     last_path_time_ = this->get_clock()->now();
     last_target_index_ = 0;  // Reset target index for new path
     
-    RCLCPP_INFO(this->get_logger(), "Received velocity path with %zu points", 
-                 current_velocity_path_.points.size());
+    RCLCPP_INFO(this->get_logger(), "Received waypoint array with %zu points", 
+                 current_waypoints_.waypoints.size());
 }
 
 void Controller::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
@@ -157,6 +161,20 @@ void Controller::control_timer_callback() {
     
     // Use Pure Pursuit controller
     auto [steering_angle, speed] = pure_pursuit_control();
+    
+    // Apply steering rate limiting
+    double dt = (current_time - last_control_time_).seconds();
+    if (dt > 0.0 && dt < 0.1) {  // Valid time step
+        double max_change = config_.max_steering_rate * dt;
+        double steering_change = steering_angle - last_steering_angle_;
+        if (std::abs(steering_change) > max_change) {
+            steering_angle = last_steering_angle_ + std::copysign(max_change, steering_change);
+        }
+    }
+    
+    // Update control history
+    last_steering_angle_ = steering_angle;
+    last_control_time_ = current_time;
 
     // Create and publish drive message
     auto drive_msg = ackermann_msgs::msg::AckermannDriveStamped();
@@ -171,35 +189,35 @@ void Controller::control_timer_callback() {
 }
 
 std::pair<double, double> Controller::pure_pursuit_control() {
-    planning_custom_msgs::msg::PathWithVelocity path;
+    crazy_planner_msgs::msg::WaypointArray waypoints;
     VehicleState vehicle;
     
     {
         std::lock_guard<std::mutex> path_lock(path_mutex_);
         std::lock_guard<std::mutex> state_lock(state_mutex_);
-        path = current_velocity_path_;
+        waypoints = current_waypoints_;
         vehicle = vehicle_state_;
     }
     
-    if (path.points.empty()) {
+    if (waypoints.waypoints.empty()) {
         return std::make_pair(0.0, 0.0);
     }
     
-    int target_index = find_target_point(path, vehicle);
-    if (target_index < 0 || target_index >= static_cast<int>(path.points.size())) {
+    int target_index = find_target_point(waypoints, vehicle);
+    if (target_index < 0 || target_index >= static_cast<int>(waypoints.waypoints.size())) {
         RCLCPP_WARN(this->get_logger(), "No valid target point found");
         return std::make_pair(0.0, 0.0);
     }
     
-    // Get target point coordinates directly from PathWithVelocity
-    double target_x = path.points[target_index].x;
-    double target_y = path.points[target_index].y;
-    double curvature = path.points[target_index].curvature;
+    // Get target point coordinates from waypoint array
+    double target_x = waypoints.waypoints[target_index].x_m;
+    double target_y = waypoints.waypoints[target_index].y_m;
+    double curvature = waypoints.waypoints[target_index].kappa_radpm;
     
     // Calculate steering angle
     double steering_angle = calculate_steering_angle(target_x, target_y, vehicle);
     
-    // Get velocity from planner
+    // Get velocity from planner (already optimized for curvature)
     double speed = get_target_speed(target_index);
     
     RCLCPP_DEBUG(this->get_logger(), "Control: target=%d, steering=%.2f°, speed=%.1f, curvature=%.3f", 
@@ -214,9 +232,9 @@ std::pair<double, double> Controller::pure_pursuit_control() {
 }
 
 
-std::pair<int, double> Controller::find_vehicle_position_on_path(const planning_custom_msgs::msg::PathWithVelocity& path, 
+std::pair<int, double> Controller::find_vehicle_position_on_path(const crazy_planner_msgs::msg::WaypointArray& waypoints, 
                                                                   const VehicleState& vehicle) {
-    if (path.points.empty()) {
+    if (waypoints.waypoints.empty()) {
         return std::make_pair(-1, 0.0);
     }
     
@@ -224,9 +242,9 @@ std::pair<int, double> Controller::find_vehicle_position_on_path(const planning_
     double min_distance = std::numeric_limits<double>::max();
     int closest_index = 0;
     
-    for (int i = 0; i < static_cast<int>(path.points.size()); ++i) {
-        double dx = path.points[i].x - vehicle.x;
-        double dy = path.points[i].y - vehicle.y;
+    for (int i = 0; i < static_cast<int>(waypoints.waypoints.size()); ++i) {
+        double dx = waypoints.waypoints[i].x_m - vehicle.x;
+        double dy = waypoints.waypoints[i].y_m - vehicle.y;
         double distance = std::sqrt(dx*dx + dy*dy);
         
         if (distance < min_distance) {
@@ -235,22 +253,15 @@ std::pair<int, double> Controller::find_vehicle_position_on_path(const planning_
         }
     }
     
-    // Calculate vehicle's s-coordinate by accumulating distances
-    double vehicle_s = 0.0;
-    for (int i = 0; i < closest_index; ++i) {
-        if (i < static_cast<int>(path.points.size()) - 1) {
-            double dx = path.points[i + 1].x - path.points[i].x;
-            double dy = path.points[i + 1].y - path.points[i].y;
-            vehicle_s += std::sqrt(dx * dx + dy * dy);
-        }
-    }
+    // Use frenet coordinate directly from waypoint if available, otherwise calculate
+    double vehicle_s = waypoints.waypoints[closest_index].s_m;
     
-    if (closest_index < static_cast<int>(path.points.size()) - 1) {
+    if (closest_index < static_cast<int>(waypoints.waypoints.size()) - 1) {
         // Project vehicle position onto the line segment between closest and next point
-        double x1 = path.points[closest_index].x;
-        double y1 = path.points[closest_index].y;
-        double x2 = path.points[closest_index + 1].x;
-        double y2 = path.points[closest_index + 1].y;
+        double x1 = waypoints.waypoints[closest_index].x_m;
+        double y1 = waypoints.waypoints[closest_index].y_m;
+        double x2 = waypoints.waypoints[closest_index + 1].x_m;
+        double y2 = waypoints.waypoints[closest_index + 1].y_m;
         
         double path_dx = x2 - x1;
         double path_dy = y2 - y1;
@@ -264,20 +275,22 @@ std::pair<int, double> Controller::find_vehicle_position_on_path(const planning_
             double t = (vehicle_dx * path_dx + vehicle_dy * path_dy) / segment_length_sq;
             t = std::clamp(t, 0.0, 1.0);
             
-            // Add the projected distance to the cumulative distance
-            vehicle_s += t * std::sqrt(segment_length_sq);
+            // Interpolate s-coordinate based on projection
+            double s1 = waypoints.waypoints[closest_index].s_m;
+            double s2 = waypoints.waypoints[closest_index + 1].s_m;
+            vehicle_s = s1 + t * (s2 - s1);
         }
     }
     
     return std::make_pair(closest_index, vehicle_s);
 }
 
-int Controller::find_target_point(const planning_custom_msgs::msg::PathWithVelocity& path, 
+int Controller::find_target_point(const crazy_planner_msgs::msg::WaypointArray& waypoints, 
                                    const VehicleState& vehicle) {
-    if (path.points.empty()) return -1;
+    if (waypoints.waypoints.empty()) return -1;
     
     // Get vehicle's position along the path (Frenet s-coordinate)
-    auto [closest_index, vehicle_s] = find_vehicle_position_on_path(path, vehicle);
+    auto [closest_index, vehicle_s] = find_vehicle_position_on_path(waypoints, vehicle);
     if (closest_index < 0) return -1;
     
     // Use iterative approach to find target point considering curvature
@@ -287,7 +300,7 @@ int Controller::find_target_point(const planning_custom_msgs::msg::PathWithVeloc
     
     // Find initial target point with base lookahead
     double target_s = vehicle_s + base_lookahead;
-    int initial_target = find_point_at_distance(path, closest_index, target_s);
+    int initial_target = find_point_at_distance(waypoints, closest_index, target_s);
     
     // Get curvature at initial target point and adjust lookahead
     double curvature = get_curvature_at_index(initial_target);
@@ -295,11 +308,11 @@ int Controller::find_target_point(const planning_custom_msgs::msg::PathWithVeloc
     
     // Find final target point with adjusted lookahead
     target_s = vehicle_s + adjusted_lookahead;
-    int final_target = find_point_at_distance(path, closest_index, target_s);
+    int final_target = find_point_at_distance(waypoints, closest_index, target_s);
     
     // Safety check: ensure we don't go beyond available curvature data
-    if (final_target >= static_cast<int>(path.points.size())) {
-        final_target = static_cast<int>(path.points.size()) - 1;
+    if (final_target >= static_cast<int>(waypoints.waypoints.size())) {
+        final_target = static_cast<int>(waypoints.waypoints.size()) - 1;
     }
     
     last_target_index_ = final_target;
@@ -357,11 +370,11 @@ double Controller::get_target_speed(int target_index) {
 
 double Controller::get_velocity_at_point(int target_index) const {
     if (!has_velocity_path_ || target_index < 0 || 
-        target_index >= static_cast<int>(current_velocity_path_.points.size())) {
+        target_index >= static_cast<int>(current_waypoints_.waypoints.size())) {
         return -1.0; // Invalid velocity
     }
     
-    return current_velocity_path_.points[target_index].velocity;
+    return current_waypoints_.waypoints[target_index].vx_mps;
 }
 
 void Controller::publish_stop_command() {
@@ -393,43 +406,43 @@ void Controller::shutdown_handler() {
 
 /////////////////////////////////////////////////////////////
 // Helper function implementations
-int Controller::find_point_at_distance(const planning_custom_msgs::msg::PathWithVelocity& path, int start_index, double target_s) {
-    if (path.points.empty() || start_index >= static_cast<int>(path.points.size())) {
+int Controller::find_point_at_distance(const crazy_planner_msgs::msg::WaypointArray& waypoints, int start_index, double target_s) {
+    if (waypoints.waypoints.empty() || start_index >= static_cast<int>(waypoints.waypoints.size())) {
         return start_index;
     }
     
-    double accumulated_distance = 0.0;
+    // Find waypoint with s-coordinate closest to target_s
     int target_index = start_index;
+    double min_diff = std::abs(waypoints.waypoints[start_index].s_m - target_s);
     
-    // Accumulate distance from start_index
-    for (int i = start_index; i < static_cast<int>(path.points.size()) - 1; ++i) {
-        double dx = path.points[i + 1].x - path.points[i].x;
-        double dy = path.points[i + 1].y - path.points[i].y;
-        accumulated_distance += std::sqrt(dx * dx + dy * dy);
-        
-        if (accumulated_distance >= target_s) {
-            target_index = i + 1;
+    for (int i = start_index; i < static_cast<int>(waypoints.waypoints.size()); ++i) {
+        double diff = std::abs(waypoints.waypoints[i].s_m - target_s);
+        if (diff < min_diff) {
+            min_diff = diff;
+            target_index = i;
+        }
+        // If we've passed the target s, stop searching
+        if (waypoints.waypoints[i].s_m > target_s) {
             break;
         }
-        target_index = i + 1;
     }
     
-    return std::min(target_index, static_cast<int>(path.points.size()) - 1);
+    return std::min(target_index, static_cast<int>(waypoints.waypoints.size()) - 1);
 }
 
 double Controller::get_curvature_at_index(int index) {
-    if (!has_velocity_path_ || current_velocity_path_.points.empty()) {
-        return 0.0;  // Default to no curvature if no velocity path available
+    if (!has_velocity_path_ || current_waypoints_.waypoints.empty()) {
+        return 0.0;  // Default to no curvature if no waypoint data available
     }
     
     // Clamp index to valid range
-    int valid_index = std::max(0, std::min(index, static_cast<int>(current_velocity_path_.points.size()) - 1));
+    int valid_index = std::max(0, std::min(index, static_cast<int>(current_waypoints_.waypoints.size()) - 1));
     
-    if (valid_index >= static_cast<int>(current_velocity_path_.points.size())) {
+    if (valid_index >= static_cast<int>(current_waypoints_.waypoints.size())) {
         return 0.0;
     }
     
-    return current_velocity_path_.points[valid_index].curvature;
+    return current_waypoints_.waypoints[valid_index].kappa_radpm;
 }
 
 } // namespace controller_pkg
