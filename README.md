@@ -21,7 +21,7 @@ ros2 launch controller_pkg controller.launch.py sim_mode:=true
 ## Prerequisites
 
 1. **Localization running**: Particle filter for pose estimation
-2. **Path planner running**: Lattice planner generating `/planned_path` 
+2. **Path planner running**: Lattice planner generating `/planned_waypoints` 
 3. **Hardware/Simulation ready**: F1TENTH system or gym bridge
 
 ## Launch Parameters
@@ -33,12 +33,12 @@ ros2 launch controller_pkg controller.launch.py sim_mode:=true
 ## Topic Remapping
 
 ### Real Car Mode (`sim_mode:=false`)
-- **Input Path**: `/planned_path` (from lattice planner)
+- **Input Waypoints**: `/planned_waypoints` (from lattice planner)
 - **Input Odometry**: `/pf/pose/odom` (from particle filter)
 - **Output Drive**: `/drive` (to F1TENTH hardware)
 
 ### Simulation Mode (`sim_mode:=true`)
-- **Input Path**: `/planned_path` (from lattice planner)
+- **Input Waypoints**: `/planned_waypoints` (from lattice planner)
 - **Input Odometry**: `/ego_racecar/odom` (from F1TENTH Gym)
 - **Output Drive**: `/drive` (to simulation)
 
@@ -68,9 +68,9 @@ The controller uses a **hybrid control approach**:
 
 ### Control Flow
 ```
-Planned Path → Path Interpolation → Lookahead Point → Steering Command
-     ↓                                                       ↓
-Velocity Profile → Speed Controller → Throttle/Brake → Ackermann Drive
+Planned Waypoints → Waypoint Selection → Lookahead Point → Steering Command
+       ↓                                                         ↓
+   Velocity Profile → Speed Controller → Throttle/Brake → Ackermann Drive
 ```
 
 ## Safety Monitor (Optional)
@@ -92,8 +92,8 @@ Configure safety parameters in the controller configuration file.
 ## Key Topics
 
 **Subscribes:**
-- `/planned_path` - Trajectory from lattice planner (`PathWithVelocity`)
-- `/odom` or `/ego_racecar/odom` - Robot pose and velocity
+- `/planned_waypoints` - Trajectory from lattice planner (`crazy_planner_msgs/WaypointArray`)
+- `/odom` - Robot pose and velocity
 - `/scan` - Laser data (for safety monitor)
 
 **Publishes:**
@@ -128,8 +128,8 @@ Sensors → Localization → Planning → Control → Actuators
 
 ## Message Types
 
-Uses custom messages from `f1tenth_planning_custom_msgs`:
-- **Input**: `PathWithVelocity` - Path points with target speeds
+Uses custom messages from `crazy_planner_msgs`:
+- **Input**: `WaypointArray` - Waypoints with target speeds and track information
 - **Output**: `AckermannDriveStamped` - Steering angle and speed commands
 
 ## Tuning Guidelines
