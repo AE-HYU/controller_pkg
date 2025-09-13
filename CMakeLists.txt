@@ -16,7 +16,7 @@ find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(rcl_interfaces REQUIRED)
-find_package(crazy_planner_msgs REQUIRED)
+find_package(ae_hyu_msgs REQUIRED)
 
 # include directories
 include_directories(include)
@@ -37,7 +37,7 @@ ament_target_dependencies(controller_node
   tf2
   tf2_ros
   tf2_geometry_msgs
-  crazy_planner_msgs
+  ae_hyu_msgs
 )
 
 # install targets

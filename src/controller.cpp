@@ -67,7 +67,7 @@ bool Controller::initialize() {
 
     
     // Initialize subscribers (only waypoint_array and odom)
-    waypoint_array_sub_ = this->create_subscription<crazy_planner_msgs::msg::WaypointArray>(
+    waypoint_array_sub_ = this->create_subscription<ae_hyu_msgs::msg::WpntArray>(
         "/planned_waypoints", 10,
         std::bind(&Controller::waypoint_array_callback, this, std::placeholders::_1));
         
@@ -89,8 +89,8 @@ bool Controller::initialize() {
     return true;
 }
 
-void Controller::waypoint_array_callback(const crazy_planner_msgs::msg::WaypointArray::SharedPtr msg) {
-    if (msg->waypoints.empty()) {
+void Controller::waypoint_array_callback(const ae_hyu_msgs::msg::WpntArray::SharedPtr msg) {
+    if (msg->wpnts.empty()) {
         RCLCPP_WARN(this->get_logger(), "Received empty waypoint array");
         return;
     }
@@ -105,8 +105,8 @@ void Controller::waypoint_array_callback(const crazy_planner_msgs::msg::Waypoint
     last_path_time_ = this->get_clock()->now();
     last_target_index_ = 0;  // Reset target index for new path
     
-    RCLCPP_INFO(this->get_logger(), "Received waypoint array with %zu points", 
-                 current_waypoints_.waypoints.size());
+    RCLCPP_INFO(this->get_logger(), "Received waypoint array with %zu points",
+                 current_waypoints_.wpnts.size());
 }
 
 void Controller::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
@@ -189,7 +189,7 @@ void Controller::control_timer_callback() {
 }
 
 std::pair<double, double> Controller::pure_pursuit_control() {
-    crazy_planner_msgs::msg::WaypointArray waypoints;
+    ae_hyu_msgs::msg::WpntArray waypoints;
     VehicleState vehicle;
     
     {
@@ -199,20 +199,20 @@ std::pair<double, double> Controller::pure_pursuit_control() {
         vehicle = vehicle_state_;
     }
     
-    if (waypoints.waypoints.empty()) {
+    if (waypoints.wpnts.empty()) {
         return std::make_pair(0.0, 0.0);
     }
     
     int target_index = find_target_point(waypoints, vehicle);
-    if (target_index < 0 || target_index >= static_cast<int>(waypoints.waypoints.size())) {
+    if (target_index < 0 || target_index >= static_cast<int>(waypoints.wpnts.size())) {
         RCLCPP_WARN(this->get_logger(), "No valid target point found");
         return std::make_pair(0.0, 0.0);
     }
     
     // Get target point coordinates from waypoint array
-    double target_x = waypoints.waypoints[target_index].x_m;
-    double target_y = waypoints.waypoints[target_index].y_m;
-    double curvature = waypoints.waypoints[target_index].kappa_radpm;
+    double target_x = waypoints.wpnts[target_index].x_m;
+    double target_y = waypoints.wpnts[target_index].y_m;
+    double curvature = waypoints.wpnts[target_index].kappa_radpm;
     
     // Calculate steering angle
     double steering_angle = calculate_steering_angle(target_x, target_y, vehicle);
@@ -232,9 +232,9 @@ std::pair<double, double> Controller::pure_pursuit_control() {
 }
 
 
-std::pair<int, double> Controller::find_vehicle_position_on_path(const crazy_planner_msgs::msg::WaypointArray& waypoints, 
+std::pair<int, double> Controller::find_vehicle_position_on_path(const ae_hyu_msgs::msg::WpntArray& waypoints,
                                                                   const VehicleState& vehicle) {
-    if (waypoints.waypoints.empty()) {
+    if (waypoints.wpnts.empty()) {
         return std::make_pair(-1, 0.0);
     }
     
@@ -242,9 +242,9 @@ std::pair<int, double> Controller::find_vehicle_position_on_path(const crazy_pla
     double min_distance = std::numeric_limits<double>::max();
     int closest_index = 0;
     
-    for (int i = 0; i < static_cast<int>(waypoints.waypoints.size()); ++i) {
-        double dx = waypoints.waypoints[i].x_m - vehicle.x;
-        double dy = waypoints.waypoints[i].y_m - vehicle.y;
+    for (int i = 0; i < static_cast<int>(waypoints.wpnts.size()); ++i) {
+        double dx = waypoints.wpnts[i].x_m - vehicle.x;
+        double dy = waypoints.wpnts[i].y_m - vehicle.y;
         double distance = std::sqrt(dx*dx + dy*dy);
         
         if (distance < min_distance) {
@@ -254,14 +254,14 @@ std::pair<int, double> Controller::find_vehicle_position_on_path(const crazy_pla
     }
     
     // Use frenet coordinate directly from waypoint if available, otherwise calculate
-    double vehicle_s = waypoints.waypoints[closest_index].s_m;
+    double vehicle_s = waypoints.wpnts[closest_index].s_m;
     
-    if (closest_index < static_cast<int>(waypoints.waypoints.size()) - 1) {
+    if (closest_index < static_cast<int>(waypoints.wpnts.size()) - 1) {
         // Project vehicle position onto the line segment between closest and next point
-        double x1 = waypoints.waypoints[closest_index].x_m;
-        double y1 = waypoints.waypoints[closest_index].y_m;
-        double x2 = waypoints.waypoints[closest_index + 1].x_m;
-        double y2 = waypoints.waypoints[closest_index + 1].y_m;
+        double x1 = waypoints.wpnts[closest_index].x_m;
+        double y1 = waypoints.wpnts[closest_index].y_m;
+        double x2 = waypoints.wpnts[closest_index + 1].x_m;
+        double y2 = waypoints.wpnts[closest_index + 1].y_m;
         
         double path_dx = x2 - x1;
         double path_dy = y2 - y1;
@@ -276,8 +276,8 @@ std::pair<int, double> Controller::find_vehicle_position_on_path(const crazy_pla
             t = std::clamp(t, 0.0, 1.0);
             
             // Interpolate s-coordinate based on projection
-            double s1 = waypoints.waypoints[closest_index].s_m;
-            double s2 = waypoints.waypoints[closest_index + 1].s_m;
+            double s1 = waypoints.wpnts[closest_index].s_m;
+            double s2 = waypoints.wpnts[closest_index + 1].s_m;
             vehicle_s = s1 + t * (s2 - s1);
         }
     }
@@ -285,9 +285,9 @@ std::pair<int, double> Controller::find_vehicle_position_on_path(const crazy_pla
     return std::make_pair(closest_index, vehicle_s);
 }
 
-int Controller::find_target_point(const crazy_planner_msgs::msg::WaypointArray& waypoints, 
+int Controller::find_target_point(const ae_hyu_msgs::msg::WpntArray& waypoints,
                                    const VehicleState& vehicle) {
-    if (waypoints.waypoints.empty()) return -1;
+    if (waypoints.wpnts.empty()) return -1;
     
     // Get vehicle's position along the path (Frenet s-coordinate)
     auto [closest_index, vehicle_s] = find_vehicle_position_on_path(waypoints, vehicle);
@@ -311,8 +311,8 @@ int Controller::find_target_point(const crazy_planner_msgs::msg::WaypointArray& 
     int final_target = find_point_at_distance(waypoints, closest_index, target_s);
     
     // Safety check: ensure we don't go beyond available curvature data
-    if (final_target >= static_cast<int>(waypoints.waypoints.size())) {
-        final_target = static_cast<int>(waypoints.waypoints.size()) - 1;
+    if (final_target >= static_cast<int>(waypoints.wpnts.size())) {
+        final_target = static_cast<int>(waypoints.wpnts.size()) - 1;
     }
     
     last_target_index_ = final_target;
@@ -369,12 +369,12 @@ double Controller::get_target_speed(int target_index) {
 
 
 double Controller::get_velocity_at_point(int target_index) const {
-    if (!has_velocity_path_ || target_index < 0 || 
-        target_index >= static_cast<int>(current_waypoints_.waypoints.size())) {
+    if (!has_velocity_path_ || target_index < 0 ||
+        target_index >= static_cast<int>(current_waypoints_.wpnts.size())) {
         return -1.0; // Invalid velocity
     }
     
-    return current_waypoints_.waypoints[target_index].vx_mps;
+    return current_waypoints_.wpnts[target_index].vx_mps;
 }
 
 void Controller::publish_stop_command() {
@@ -406,43 +406,43 @@ void Controller::shutdown_handler() {
 
 /////////////////////////////////////////////////////////////
 // Helper function implementations
-int Controller::find_point_at_distance(const crazy_planner_msgs::msg::WaypointArray& waypoints, int start_index, double target_s) {
-    if (waypoints.waypoints.empty() || start_index >= static_cast<int>(waypoints.waypoints.size())) {
+int Controller::find_point_at_distance(const ae_hyu_msgs::msg::WpntArray& waypoints, int start_index, double target_s) {
+    if (waypoints.wpnts.empty() || start_index >= static_cast<int>(waypoints.wpnts.size())) {
         return start_index;
     }
     
     // Find waypoint with s-coordinate closest to target_s
     int target_index = start_index;
-    double min_diff = std::abs(waypoints.waypoints[start_index].s_m - target_s);
+    double min_diff = std::abs(waypoints.wpnts[start_index].s_m - target_s);
     
-    for (int i = start_index; i < static_cast<int>(waypoints.waypoints.size()); ++i) {
-        double diff = std::abs(waypoints.waypoints[i].s_m - target_s);
+    for (int i = start_index; i < static_cast<int>(waypoints.wpnts.size()); ++i) {
+        double diff = std::abs(waypoints.wpnts[i].s_m - target_s);
         if (diff < min_diff) {
             min_diff = diff;
             target_index = i;
         }
         // If we've passed the target s, stop searching
-        if (waypoints.waypoints[i].s_m > target_s) {
+        if (waypoints.wpnts[i].s_m > target_s) {
             break;
         }
     }
     
-    return std::min(target_index, static_cast<int>(waypoints.waypoints.size()) - 1);
+    return std::min(target_index, static_cast<int>(waypoints.wpnts.size()) - 1);
 }
 
 double Controller::get_curvature_at_index(int index) {
-    if (!has_velocity_path_ || current_waypoints_.waypoints.empty()) {
+    if (!has_velocity_path_ || current_waypoints_.wpnts.empty()) {
         return 0.0;  // Default to no curvature if no waypoint data available
     }
     
     // Clamp index to valid range
-    int valid_index = std::max(0, std::min(index, static_cast<int>(current_waypoints_.waypoints.size()) - 1));
-    
-    if (valid_index >= static_cast<int>(current_waypoints_.waypoints.size())) {
+    int valid_index = std::max(0, std::min(index, static_cast<int>(current_waypoints_.wpnts.size()) - 1));
+
+    if (valid_index >= static_cast<int>(current_waypoints_.wpnts.size())) {
         return 0.0;
     }
     
-    return current_waypoints_.waypoints[valid_index].kappa_radpm;
+    return current_waypoints_.wpnts[valid_index].kappa_radpm;
 }
 
 } // namespace controller_pkg
