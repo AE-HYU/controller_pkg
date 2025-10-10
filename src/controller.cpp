@@ -43,6 +43,8 @@ bool Controller::initialize() {
     this->declare_parameter("velocity_scale_factor", config_.velocity_scale_factor);
     this->declare_parameter("curvature_sensitivity", config_.curvature_sensitivity);
     this->declare_parameter("max_steering_rate", config_.max_steering_rate);
+    this->declare_parameter("map_frame", "map");
+    this->declare_parameter("base_link_frame", "base_link");
 
     // Get parameters
     config_.lookahead_distance = this->get_parameter("lookahead_distance").as_double();
@@ -58,8 +60,15 @@ bool Controller::initialize() {
     config_.velocity_scale_factor = this->get_parameter("velocity_scale_factor").as_double();
     config_.curvature_sensitivity = this->get_parameter("curvature_sensitivity").as_double();
     config_.max_steering_rate = this->get_parameter("max_steering_rate").as_double();
+    map_frame_ = this->get_parameter("map_frame").as_string();
+    base_link_frame_ = this->get_parameter("base_link_frame").as_string();
 
     RCLCPP_INFO(this->get_logger(), "Pure Pursuit Controller initialized");
+    RCLCPP_INFO(this->get_logger(), "Using TF: %s -> %s", map_frame_.c_str(), base_link_frame_.c_str());
+
+    // Initialize TF
+    tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
     // Initialize publishers
     drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(
@@ -111,23 +120,41 @@ void Controller::waypoint_array_callback(const ae_hyu_msgs::msg::WpntArray::Shar
 
 void Controller::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     std::lock_guard<std::mutex> lock(state_mutex_);
-    
-    vehicle_state_.x = msg->pose.pose.position.x;
-    vehicle_state_.y = msg->pose.pose.position.y;
-    
-    // Convert quaternion to yaw
-    tf2::Quaternion q;
-    tf2::fromMsg(msg->pose.pose.orientation, q);
-    double roll, pitch, yaw;
-    tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
-    vehicle_state_.yaw = yaw;
-    
-    // Calculate velocity
+
+    // Get velocity from odom message
     double vx = msg->twist.twist.linear.x;
     double vy = msg->twist.twist.linear.y;
     vehicle_state_.velocity = std::sqrt(vx*vx + vy*vy);
-    // std::cout << "vehicle_state : " << vehicle_state_.velocity << std::endl;
-    vehicle_state_.valid = true;
+
+    // Get position and orientation from TF (map_frame_ -> base_link_frame_)
+    try {
+        auto transform = tf_buffer_->lookupTransform(
+            map_frame_, base_link_frame_,
+            tf2::TimePointZero  // Get latest available transform
+        );
+
+        // Extract position
+        vehicle_state_.x = transform.transform.translation.x;
+        vehicle_state_.y = transform.transform.translation.y;
+
+        // Extract orientation (yaw)
+        tf2::Quaternion q(
+            transform.transform.rotation.x,
+            transform.transform.rotation.y,
+            transform.transform.rotation.z,
+            transform.transform.rotation.w
+        );
+        double roll, pitch, yaw;
+        tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+        vehicle_state_.yaw = yaw;
+
+        vehicle_state_.valid = true;
+
+    } catch (const tf2::TransformException & ex) {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                            "Could not get %s->%s transform: %s", map_frame_.c_str(), base_link_frame_.c_str(), ex.what());
+        vehicle_state_.valid = false;
+    }
 }
 
 void Controller::control_timer_callback() {
